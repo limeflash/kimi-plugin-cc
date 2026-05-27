@@ -1,0 +1,14 @@
+{
+  "name": "kimi-plugin-cc",
+  "version": "0.2.1",
+  "description": "Claude Code plugin for Kimi delegation",
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/**/*.test.mjs",
+    "smoke": "bash tests/smoke.sh"
+  },
+  "engines": {
+    "node": ">=18.18.0"
+  },
+  "license": "MIT"
+}
