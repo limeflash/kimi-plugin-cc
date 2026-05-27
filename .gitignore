@@ -1,7 +1,43 @@
-# Node.js
-node_modules/
-package-lock.json
+# Logs
+logs
+*.log
 npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# Diagnostic reports (https://nodejs.org/api/report.html)
+report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage
+*.lcov
+
+# nyc test coverage
+.nyc_output
+
+# Dependency directories
+node_modules/
+
+# Optional npm cache directory
+.npm
+
+# Optional eslint cache
+.eslintcache
+
+# Output of 'npm pack'
+*.tgz
+
+# dotenv environment variable files
+.env
+.env.*
+!.env.example
 
 # macOS
 .DS_Store
@@ -15,10 +51,12 @@ npm-debug.log*
 *.swo
 *~
 
-# Test artifacts
-*.log
-coverage/
-.nyc_output/
-
 # Session data (user-local)
 # NOTE: sessions are stored in ~/.kimi-plugin-cc/, not in the repo
+
+# Test artifacts
+coverage/
+*.log
+
+# Claude Code
+.claude/

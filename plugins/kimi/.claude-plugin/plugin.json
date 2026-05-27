@@ -1,0 +1,11 @@
+{
+  "name": "kimi",
+  "version": "0.2.1",
+  "description": "Use Kimi from Claude Code to review code, explore codebases, or delegate tasks.",
+  "author": {
+    "name": "Luan Moreno",
+    "email": "luan.moreno@owshq.com"
+  },
+  "repository": "https://github.com/luanmorenommaciel/kimi-plugin-cc",
+  "license": "MIT"
+}

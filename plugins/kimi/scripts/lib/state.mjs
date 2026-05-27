@@ -1,21 +1,28 @@
 import { readFile, writeFile, mkdir, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 
-const KIMI_PLUGIN_ROOT = path.join(process.env.HOME, '.kimi-plugin-cc');
-const SESSIONS_DIR = path.join(KIMI_PLUGIN_ROOT, 'sessions');
+function getPluginRoot() {
+  return process.env.KIMI_PLUGIN_DATA
+    ? path.join(process.env.KIMI_PLUGIN_DATA)
+    : path.join(process.env.HOME, '.kimi-plugin-cc');
+}
+
+function getSessionsDir() {
+  return path.join(getPluginRoot(), 'sessions');
+}
 
 export async function initSessionDir() {
-  await mkdir(SESSIONS_DIR, { recursive: true });
+  await mkdir(getSessionsDir(), { recursive: true });
 }
 
 export async function writeMeta(sessionId, meta) {
-  const sessDir = path.join(SESSIONS_DIR, sessionId);
+  const sessDir = path.join(getSessionsDir(), sessionId);
   await mkdir(sessDir, { recursive: true });
   await writeFile(path.join(sessDir, 'meta.json'), JSON.stringify(meta, null, 2));
 }
 
 export async function readMeta(sessionId) {
-  const file = path.join(SESSIONS_DIR, sessionId, 'meta.json');
+  const file = path.join(getSessionsDir(), sessionId, 'meta.json');
   const data = await readFile(file, 'utf-8');
   return JSON.parse(data);
 }
@@ -28,10 +35,10 @@ export async function updateMeta(sessionId, patch) {
 
 export async function listSessions() {
   try {
-    const dirs = await readdir(SESSIONS_DIR);
+    const dirs = await readdir(getSessionsDir());
     const sessions = [];
     for (const id of dirs) {
-      const metaPath = path.join(SESSIONS_DIR, id, 'meta.json');
+      const metaPath = path.join(getSessionsDir(), id, 'meta.json');
       try {
         const s = await stat(metaPath);
         if (s.isFile()) {
@@ -50,7 +57,7 @@ export async function listSessions() {
 }
 
 export async function isRunning(sessionId) {
-  const pidFile = path.join(SESSIONS_DIR, sessionId, 'pid');
+  const pidFile = path.join(getSessionsDir(), sessionId, 'pid');
   try {
     const pid = parseInt(await readFile(pidFile, 'utf-8'), 10);
     process.kill(pid, 0);

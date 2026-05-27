@@ -1,0 +1,32 @@
+{
+  "name": "luanmorenommaciel-kimi",
+  "owner": {
+    "name": "Luan Moreno",
+    "email": "luan.moreno@owshq.com"
+  },
+  "metadata": {
+    "description": "Kimi plugin for Claude Code — code review, exploration, and task delegation with 9 slash commands.",
+    "version": "0.2.1"
+  },
+  "plugins": [
+    {
+      "name": "kimi",
+      "description": "Use Kimi from Claude Code to review code, explore codebases, or delegate tasks.",
+      "version": "0.2.1",
+      "author": {
+        "name": "Luan Moreno",
+        "email": "luan.moreno@owshq.com"
+      },
+      "source": "./plugins/kimi",
+      "keywords": [
+        "kimi",
+        "code-review",
+        "exploration",
+        "delegation",
+        "ai-agent",
+        "background-tasks",
+        "adversarial-review"
+      ]
+    }
+  ]
+}

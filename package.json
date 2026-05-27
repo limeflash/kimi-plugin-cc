@@ -1,14 +1,29 @@
 {
   "name": "kimi-plugin-cc",
   "version": "0.2.1",
-  "description": "Claude Code plugin for Kimi delegation",
+  "description": "Claude Code plugin for Kimi delegation — code review, exploration, and task execution",
   "type": "module",
   "scripts": {
     "test": "node --test tests/**/*.test.mjs",
-    "smoke": "bash tests/smoke.sh"
+    "smoke": "bash tests/smoke.sh",
+    "lint": "node scripts/lint.mjs",
+    "build": "echo 'No build step required'"
   },
   "engines": {
     "node": ">=18.18.0"
   },
-  "license": "MIT"
+  "files": [
+    "plugins/",
+    ".claude-plugin/",
+    "docs/",
+    "LICENSE",
+    "NOTICE",
+    "CHANGELOG.md",
+    "README.md"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/luanmorenommaciel/kimi-plugin-cc.git"
+  }
 }

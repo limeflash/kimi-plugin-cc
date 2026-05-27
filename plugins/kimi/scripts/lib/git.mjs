@@ -2,7 +2,11 @@ import { execFile } from 'node:child_process';
 import { writeFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 
-const KIMI_PLUGIN_ROOT = path.join(process.env.HOME, '.kimi-plugin-cc');
+function getPluginRoot() {
+  return process.env.KIMI_PLUGIN_DATA
+    ? path.join(process.env.KIMI_PLUGIN_DATA)
+    : path.join(process.env.HOME, '.kimi-plugin-cc');
+}
 
 function runGit(args, cwd) {
   return new Promise((resolve, reject) => {
@@ -20,7 +24,7 @@ function runGit(args, cwd) {
  * Capture pre/post diff for a session.
  */
 export async function captureDiff(sessionId, phase, repoPath = process.cwd()) {
-  const sessDir = path.join(KIMI_PLUGIN_ROOT, 'sessions', sessionId);
+  const sessDir = path.join(getPluginRoot(), 'sessions', sessionId);
   await mkdir(sessDir, { recursive: true });
 
   const diff = await runGit(['diff', 'HEAD'], repoPath).catch(() => '');

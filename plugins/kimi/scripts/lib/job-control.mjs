@@ -5,12 +5,19 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { findRepoRoot, writeRepoSession } from './workspace.mjs';
 
-const KIMI_PLUGIN_ROOT = path.join(process.env.HOME, '.kimi-plugin-cc');
-const SESSIONS_DIR = path.join(KIMI_PLUGIN_ROOT, 'sessions');
+function getPluginRoot() {
+  return process.env.KIMI_PLUGIN_DATA
+    ? path.join(process.env.KIMI_PLUGIN_DATA)
+    : path.join(process.env.HOME, '.kimi-plugin-cc');
+}
+
+function getSessionsDir() {
+  return path.join(getPluginRoot(), 'sessions');
+}
 
 export async function startBackground(opts) {
   const sessionId = opts.sessionId || crypto.randomUUID();
-  const sessDir = path.join(SESSIONS_DIR, sessionId);
+  const sessDir = path.join(getSessionsDir(), sessionId);
   await mkdir(sessDir, { recursive: true });
 
   const repoPath = await findRepoRoot();
