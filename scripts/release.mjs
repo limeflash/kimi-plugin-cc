@@ -77,7 +77,7 @@ async function checkLint() {
 }
 
 async function checkTests() {
-  const { code, stderr } = await run('node', ['--test', 'tests/**/*.test.mjs'], { timeout: 120000 });
+  const { code, stderr } = await run('node', ['--test', '--test-concurrency=1', 'tests/**/*.test.mjs'], { timeout: 120000 });
   if (code !== 0) {
     throw new Error('Tests failed: ' + stderr);
   }

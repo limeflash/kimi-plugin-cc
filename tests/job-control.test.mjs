@@ -24,17 +24,17 @@ test('getSessionsDir respects KIMI_PLUGIN_DATA override', () => {
   }
 });
 
-test('getSessionsDir falls back to HOME when env unset', () => {
+test('getSessionsDir falls back to HOME when env unset', (t) => {
   const prevEnv = process.env.KIMI_PLUGIN_DATA;
   delete process.env.KIMI_PLUGIN_DATA;
+  t.after(() => {
+    if (prevEnv === undefined) delete process.env.KIMI_PLUGIN_DATA;
+    else process.env.KIMI_PLUGIN_DATA = prevEnv;
+  });
 
-  try {
-    const dir = getSessionsDir();
-    assert.ok(dir.includes('.kimi-plugin-cc'));
-    assert.ok(dir.endsWith('sessions'));
-  } finally {
-    process.env.KIMI_PLUGIN_DATA = prevEnv;
-  }
+  const dir = getSessionsDir();
+  assert.ok(dir.includes('.kimi-plugin-cc'));
+  assert.ok(dir.endsWith('sessions'));
 });
 
 test('startBackground writes meta.json and pid file', async () => {
