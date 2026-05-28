@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **Flaky test isolation** — `node --test` runs files in parallel workers, and several tests mutated the shared `process.env.KIMI_PLUGIN_DATA` global. A sibling test deleting the var could race with the mock-spawn integration test's deferred close handler, intermittently failing `startBackground end-to-end with mock spawn`. Pinned the runner to `--test-concurrency=1` in both `package.json` and the release guardrail (`scripts/release.mjs`, which previously hardcoded its own test command and drifted from `npm test`). Hardened the env-deletion test with a `t.after()` hook that correctly restores to unset (avoiding the `process.env.X = undefined` -> string `"undefined"` coercion trap).
+
 ## 0.3.0
 
 ### MCP-Powered Features
