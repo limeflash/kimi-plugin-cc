@@ -77,7 +77,7 @@ export async function startBackground(opts) {
 }
 
 export async function cancelSession(sessionId) {
-  const pidFile = path.join(SESSIONS_DIR, sessionId, 'pid');
+  const pidFile = path.join(getSessionsDir(), sessionId, 'pid');
   try {
     const pid = parseInt(await readFile(pidFile, 'utf-8'), 10);
     try { process.kill(pid, 'SIGTERM'); } catch {}
@@ -87,7 +87,7 @@ export async function cancelSession(sessionId) {
     // no pid file
   }
 
-  const metaPath = path.join(SESSIONS_DIR, sessionId, 'meta.json');
+  const metaPath = path.join(getSessionsDir(), sessionId, 'meta.json');
   try {
     const m = JSON.parse(await readFile(metaPath, 'utf-8'));
     m.status = 'cancelled';
