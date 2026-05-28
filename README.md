@@ -49,6 +49,27 @@ Then run:
 /kimi:setup
 ```
 
+## Update
+
+Check for updates:
+
+```bash
+/kimi:update --check-only
+```
+
+Install the latest version:
+
+```bash
+/kimi:update
+```
+
+Or manually:
+
+```bash
+cd $(git rev-parse --show-toplevel) && git pull
+/reload-plugins
+```
+
 `/kimi:setup` will tell you whether Kimi is ready. If Kimi CLI is missing, it will guide you to install it. If Kimi is installed but not logged in yet, run:
 
 ```bash

@@ -1,41 +1,33 @@
 ---
 name: kimi:status
-description: List active and recent Kimi sessions for the current repository.
-argument-hint: [<session-id>]
-allowed-tools: [Bash]
+description: Check the status of a Kimi session or list all sessions.
+argument-hint: [--session-id <id>]
+allowed-tools: [Bash, Read]
 ---
 
 # /kimi:status
 
-> Check progress on background Kimi work.
+> Check session status. Lists all sessions if no ID given.
 
 ## Usage
 
 ```
 /kimi:status
-/kimi:status <session-id>
+/kimi:status --session-id <id>
 ```
 
-## Process
+## Watch Progress Stream
 
-1. **Query broker**
-   ```
-   Bash("node plugins/kimi/scripts/broker.mjs status [--session-id <id>]")
-   ```
+During long sessions, stream live progress events:
 
-2. **Render results**
+```
+node plugins/kimi/scripts/broker.mjs watch --session-id <id>
+```
 
-   If no session ID:
-   ```
-   | Session ID | Mode   | Status   | Started | Running |
-   |------------|--------|----------|---------|---------|
-   | abc123     | crank  | running  | 16:00   | yes     |
-   | def456     | review | completed| 15:30   | no      |
-   ```
+Events emitted:
+- `[exploring] reading <file>` — ReadFile tool calls
+- `[editing] <file>` — WriteFile/Edit tool calls
+- `[verifying] running <eval>` — Shell eval execution
+- `[done] <status> <commit-sha>` — Session completion
 
-   If session ID provided, show full metadata + tail of output.
-
-## Notes
-
-- Sessions are stored in `~/.kimi-plugin-cc/sessions/`.
-- Per-repo latest session tracked in `.kimi/.session`.
+Add `--verbose` to include think-block summaries.

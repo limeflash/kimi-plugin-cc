@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { createWriteStream } from 'node:fs';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 
@@ -8,7 +8,11 @@ import crypto from 'node:crypto';
  * Wrap the local `kimi` CLI with retry logic and JSONL capture.
  */
 
-const KIMI_PLUGIN_ROOT = path.join(process.env.HOME, '.kimi-plugin-cc');
+function getPluginRoot() {
+  return process.env.KIMI_PLUGIN_DATA
+    ? path.join(process.env.KIMI_PLUGIN_DATA)
+    : path.join(process.env.HOME, '.kimi-plugin-cc');
+}
 
 /**
  * Invoke kimi --print with structured output capture.
@@ -24,7 +28,7 @@ const KIMI_PLUGIN_ROOT = path.join(process.env.HOME, '.kimi-plugin-cc');
  */
 export async function invokeKimi(opts) {
   const sessionId = opts.sessionId || crypto.randomUUID();
-  const sessDir = path.join(KIMI_PLUGIN_ROOT, 'sessions', sessionId);
+  const sessDir = path.join(getPluginRoot(), 'sessions', sessionId);
   await mkdir(sessDir, { recursive: true });
 
   const outputFile = opts.outputFile || path.join(sessDir, 'output.jsonl');
@@ -120,4 +124,95 @@ async function extractFinalMessage(outputFile) {
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+/**
+ * Watch a session's output.jsonl and emit progress events.
+ *
+ * @param {string} sessionId
+ * @param {object} [opts]
+ * @param {boolean} [opts.verbose=false]
+ * @param {function} [opts.onEvent] - called with each progress line
+ * @returns {Promise<{exitCode: number}>}
+ */
+export async function watchSession(sessionId, opts = {}) {
+  const sessDir = path.join(getPluginRoot(), 'sessions', sessionId);
+  const outputFile = path.join(sessDir, 'output.jsonl');
+  const metaFile = path.join(sessDir, 'meta.json');
+
+  let lastSize = 0;
+  try {
+    const s = await stat(outputFile);
+    lastSize = s.size;
+  } catch {
+    lastSize = 0;
+  }
+
+  const emit = opts.onEvent || ((line) => console.log(line));
+
+  return new Promise((resolve) => {
+    const interval = setInterval(async () => {
+      let data;
+      try {
+        const s = await stat(outputFile);
+        if (s.size <= lastSize) {
+          // Check if session completed
+          let meta;
+          try {
+            meta = JSON.parse(await readFile(metaFile, 'utf-8'));
+          } catch {
+            meta = null;
+          }
+          if (meta && ['completed', 'failed', 'cancelled'].includes(meta.status)) {
+            clearInterval(interval);
+            emit(`[done] ${meta.status}${meta.commit_sha ? ' ' + meta.commit_sha : ''}`);
+            resolve({ exitCode: meta.exit_code ?? 0 });
+          }
+          return;
+        }
+
+        data = await readFile(outputFile, 'utf-8');
+      } catch {
+        return;
+      }
+
+      const chunk = data.slice(lastSize);
+      lastSize = data.length;
+
+      const lines = chunk.split('\n').filter(Boolean);
+      for (const line of lines) {
+        let obj;
+        try {
+          obj = JSON.parse(line);
+        } catch {
+          continue;
+        }
+
+        if (obj.tool_calls && Array.isArray(obj.tool_calls)) {
+          for (const tc of obj.tool_calls) {
+            const name = tc.name || tc.function?.name || '';
+            const args = tc.arguments || tc.args || {};
+            if (name === 'ReadFile' || name === 'Read') {
+              const p = args.path || '';
+              emit(`[exploring] reading ${path.basename(p) || p}`);
+            } else if (name === 'WriteFile' || name === 'Edit' || name === 'StrReplaceFile') {
+              const p = args.path || '';
+              emit(`[editing] ${path.basename(p) || p}`);
+            } else if (name === 'Shell' || name === 'Bash') {
+              const cmd = args.command || args.cmd || '';
+              if (/eval_\d|eval\d/.test(cmd)) {
+                const m = cmd.match(/eval[_-]?\w+/);
+                emit(`[verifying] running ${m ? m[0] : 'eval'}`);
+              }
+            }
+          }
+        }
+
+        if (opts.verbose && obj.role === 'assistant' && obj.think) {
+          const think = obj.think.slice(0, 60).replace(/\n/g, ' ');
+          emit(`[thinking] ${think}${obj.think.length > 60 ? '...' : ''}`);
+        }
+      }
+    }, 1000);
+  });
 }

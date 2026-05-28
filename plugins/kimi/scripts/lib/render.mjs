@@ -49,3 +49,60 @@ export function renderExplore(result) {
   }
   return md;
 }
+
+/**
+ * Render a batch report as markdown table.
+ *
+ * @param {object[]} sessions
+ * @returns {string}
+ */
+export function renderReport(sessions) {
+  if (!sessions || sessions.length === 0) {
+    return '**No sessions found.**';
+  }
+
+  const rows = sessions.map((s) => {
+    const duration = s.started_at && s.finished_at
+      ? Math.round((new Date(s.finished_at) - new Date(s.started_at)) / 1000)
+      : '-';
+    const tokens = s.telemetry
+      ? (s.telemetry.prompt_tokens || 0) + (s.telemetry.completion_tokens || 0)
+      : '-';
+    const cost = s.telemetry?.estimated_cost_usd ?? '-';
+    return {
+      id: s.session_id?.slice(0, 8) || '-',
+      status: s.status || '?',
+      duration,
+      committed: s.committed ? 'yes' : 'no',
+      commit_sha: s.commit_sha ? s.commit_sha.slice(0, 7) : '-',
+      tokens,
+      cost,
+    };
+  });
+
+  let md = '## Batch Report\n\n';
+  md += '| Session | Status | Duration | Committed | Commit | Tokens | Cost |\n';
+  md += '|---------|--------|----------|-----------|--------|--------|------|\n';
+  for (const r of rows) {
+    md += `| ${r.id} | ${r.status} | ${r.duration}s | ${r.committed} | ${r.commit_sha} | ${r.tokens} | ${r.cost} |\n`;
+  }
+
+  // Footer totals
+  const totalSessions = sessions.length;
+  const totalDuration = sessions.reduce((sum, s) => {
+    return sum + (s.started_at && s.finished_at
+      ? (new Date(s.finished_at) - new Date(s.started_at)) / 1000
+      : 0);
+  }, 0);
+  const totalTokens = sessions.reduce((sum, s) => {
+    return sum + (s.telemetry
+      ? (s.telemetry.prompt_tokens || 0) + (s.telemetry.completion_tokens || 0)
+      : 0);
+  }, 0);
+  const totalCost = sessions.reduce((sum, s) => sum + (s.telemetry?.estimated_cost_usd || 0), 0);
+  const completed = sessions.filter((s) => s.status === 'completed').length;
+  const passRate = totalSessions > 0 ? Math.round((completed / totalSessions) * 1000) / 10 : 0;
+
+  md += `\n**Totals:** ${totalSessions} sessions, ${Math.round(totalDuration)}s, ${totalTokens} tokens, $${Math.round(totalCost * 10000) / 10000}, ${passRate}% pass rate\n`;
+  return md;
+}

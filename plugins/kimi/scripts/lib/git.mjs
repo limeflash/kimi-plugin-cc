@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
-import { writeFile, mkdir } from 'node:fs/promises';
+import { writeFile, mkdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { warn } from './warn.mjs';
 
 function getPluginRoot() {
   return process.env.KIMI_PLUGIN_DATA
@@ -58,4 +59,81 @@ export async function findRepoRoot(start = process.cwd()) {
   } catch {
     return start;
   }
+}
+
+/**
+ * Get current branch name.
+ */
+export async function getCurrentBranch(repoPath = process.cwd()) {
+  try {
+    const out = await runGit(['rev-parse', '--abbrev-ref', 'HEAD'], repoPath);
+    return out.trim();
+  } catch {
+    return 'main';
+  }
+}
+
+/**
+ * Fetch origin and compare touches_paths for divergence.
+ *
+ * @param {string[]} touchesPaths
+ * @param {string} repoPath
+ * @returns {Promise<{diverged: boolean, conflicting_paths: string[], origin_sha: string}>}
+ */
+export async function fetchAndCompare(touchesPaths, repoPath = process.cwd()) {
+  const branch = await getCurrentBranch(repoPath);
+  const stateDir = path.join(repoPath, '.kimi', 'state');
+  await mkdir(stateDir, { recursive: true });
+
+  const stateFile = path.join(stateDir, `origin-${branch}.json`);
+  let cached;
+  try {
+    cached = JSON.parse(await readFile(stateFile, 'utf-8'));
+  } catch {
+    cached = null;
+  }
+
+  const now = Date.now();
+  const stale = !cached || (now - new Date(cached.fetched_at).getTime() > 60000);
+
+  let originSha;
+  if (stale) {
+    try {
+      await runGit(['fetch', 'origin', branch], repoPath);
+      originSha = (await runGit(['rev-parse', `origin/${branch}`], repoPath)).trim();
+      await writeFile(stateFile, JSON.stringify({ branch, origin_sha: originSha, fetched_at: new Date().toISOString() }, null, 2));
+    } catch (e) {
+      await warn('git', e, 'warning');
+      originSha = cached?.origin_sha || '';
+    }
+  } else {
+    originSha = cached.origin_sha;
+  }
+
+  if (!originSha) {
+    return { diverged: false, conflicting_paths: [], origin_sha: '' };
+  }
+
+  const localSha = (await runGit(['rev-parse', 'HEAD'], repoPath).catch(() => '')).trim();
+  if (localSha === originSha) {
+    return { diverged: false, conflicting_paths: [], origin_sha: originSha };
+  }
+
+  const conflicting = [];
+  for (const tp of touchesPaths) {
+    try {
+      const diff = await runGit(['diff', `${originSha}...${localSha}`, '--', tp], repoPath);
+      if (diff.trim()) {
+        conflicting.push(tp);
+      }
+    } catch (e) {
+      await warn('git', e, 'info');
+    }
+  }
+
+  return {
+    diverged: conflicting.length > 0,
+    conflicting_paths: conflicting,
+    origin_sha: originSha,
+  };
 }

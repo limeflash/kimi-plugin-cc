@@ -60,3 +60,7 @@ coverage/
 
 # Claude Code
 .claude/
+
+# Kimi plugin runtime state
+.kimi/.session
+.kimi/state/

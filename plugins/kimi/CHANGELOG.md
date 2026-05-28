@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.0
+
+- Node.js broker with 16 subcommands and command registry pattern
+- MCP integrations: Tavily (research/docs/validation), Firecrawl (structured extraction/monitoring), Exa (semantic patterns)
+- 12-stage dispatch pipeline with preflight sandboxing, origin-state checks, and graceful degradation
+- Wave-based batch orchestration with topological sort and path-conflict detection
+- Checkpoint/resume with automatic diff stashing
+- Structured warning system (JSONL)
+- Telemetry parsing with token usage and cost estimation
+- Codex adversarial review gates (plan + diff)
+- Live progress streaming via output.jsonl polling
+- Scoped context injection with picomatch glob rules
+- Auto `.env` loading with `.env.example` template
+
 ## 0.2.1
 
 - Node.js broker rewrite with 6 library modules
