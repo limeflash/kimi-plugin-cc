@@ -1,8 +1,7 @@
 {
-  "hooks": [
-    {
+  "hooks": {
+    "kimi-review-gate": {
       "type": "Stop",
-      "id": "kimi-review-gate",
       "enabled": false,
       "description": "Before Claude stops, run a quick Kimi explore review on the response. If issues found, block the stop.",
       "command": "kimi:review-gate",
@@ -11,5 +10,5 @@
         "prompt_template": "plugins/kimi/prompts/review-gate.md"
       }
     }
-  ]
+  }
 }
