@@ -18,7 +18,7 @@ import { captureBaseline, checkForChanges } from './monitor.mjs';
 import { readFile, writeFile, mkdir, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import picomatch from 'picomatch';
+import { matchGlob } from './glob.mjs';
 
 // ------------------------------------------------------------------
 // Registry
@@ -671,15 +671,13 @@ async function cmdBatch(opts, positional) {
   const forceDispatch = opts.force_dispatch === true || opts.force_dispatch === 'true';
   const skipPreflight = opts.skip_preflight === true || opts.skip_preflight === 'true';
 
-  // Resolve glob to absolute paths using picomatch
   const taskPaths = [];
   const baseDir = path.resolve(repoPath, path.dirname(pattern));
   const baseName = path.basename(pattern);
-  const isMatch = picomatch(baseName);
   try {
     const entries = await readdir(baseDir);
     for (const e of entries) {
-      if (isMatch(e)) taskPaths.push(path.join(baseDir, e));
+      if (matchGlob(e, baseName)) taskPaths.push(path.join(baseDir, e));
     }
   } catch (e) {
     await warn('batch', e, 'error');

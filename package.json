@@ -1,6 +1,6 @@
 {
   "name": "kimi-plugin-cc",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Claude Code plugin for Kimi delegation — code review, exploration, and task execution",
   "type": "module",
   "scripts": {
@@ -12,7 +12,7 @@
     "build": "echo 'No build step required'"
   },
   "engines": {
-    "node": ">=18.18.0"
+    "node": ">=20.17.0"
   },
   "files": [
     "plugins/",
@@ -28,8 +28,5 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/luanmorenommaciel/kimi-plugin-cc.git"
-  },
-  "devDependencies": {
-    "picomatch": "^4.0.4"
   }
 }
