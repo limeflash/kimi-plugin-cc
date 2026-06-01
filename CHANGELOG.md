@@ -1,8 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.3.1
 
 ### Fixed
+
+- **Marketplace install crash (`ERR_MODULE_NOT_FOUND: picomatch`)** — v0.3.0 imported `picomatch` in `commands.mjs` and `context.mjs`, but it was declared only under `devDependencies` in the repo-root `package.json`. Claude Code's plugin loader unpacks the marketplace artifact into `~/.claude/plugins/cache/.../<version>/` without running `npm install`, so the dependency was never resolved at the cache location and every broker invocation crashed at module load. Replaced both call sites with Node stdlib `path.matchesGlob` via a new `lib/glob.mjs` helper that throws on unsupported metachars (`{}()!+@[`), so future rule authors using extglob/brace syntax get a loud diagnosable error instead of a silent mismatch. Bumped `engines.node` from `>=18.18.0` to `>=20.17.0` (Node 18 EOL April 2025; `path.matchesGlob` requires 20.17+). Dropped the `picomatch` dev-dependency entirely — zero runtime deps. Added unit tests for `matchGlob` covering happy paths and all five loud-failure cases.
 
 - **Flaky test isolation** — `node --test` runs files in parallel workers, and several tests mutated the shared `process.env.KIMI_PLUGIN_DATA` global. A sibling test deleting the var could race with the mock-spawn integration test's deferred close handler, intermittently failing `startBackground end-to-end with mock spawn`. Pinned the runner to `--test-concurrency=1` in both `package.json` and the release guardrail (`scripts/release.mjs`, which previously hardcoded its own test command and drifted from `npm test`). Hardened the env-deletion test with a `t.after()` hook that correctly restores to unset (avoiding the `process.env.X = undefined` -> string `"undefined"` coercion trap).
 

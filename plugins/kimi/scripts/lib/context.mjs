@@ -1,6 +1,6 @@
 import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
-import picomatch from 'picomatch';
+import { matchGlob } from './glob.mjs';
 
 const CONTEXT_CAP_BYTES = 8 * 1024; // 8KB total cap
 
@@ -33,7 +33,7 @@ export async function discoverContext(touchesPaths, repoRoot) {
     const text = await readTextSafe(rf);
     if (!text) continue;
     const scope = extractScope(text, rf);
-    if (scope && touchesPaths.some((tp) => matchGlob(tp, scope))) {
+    if (scope && touchesPaths.some((tp) => matchScopedGlob(tp, scope))) {
       const truncated = truncateRule(text);
       blocks.push({ title: path.relative(repoRoot, rf), content: truncated });
     }
@@ -102,9 +102,9 @@ function extractScope(text, filepath) {
   return null;
 }
 
-function matchGlob(filePath, glob) {
+function matchScopedGlob(filePath, glob) {
   const fp = filePath.replace(/^\//, '');
-  return picomatch.isMatch(fp, glob);
+  return matchGlob(fp, glob);
 }
 
 function truncateRule(text) {
