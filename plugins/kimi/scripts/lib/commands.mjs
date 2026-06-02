@@ -1,6 +1,6 @@
 import { invokeKimi, watchSession } from './kimi.mjs';
 import { captureDiff, getBranchDiff, getWorkingDiff, fetchAndCompare } from './git.mjs';
-import { initSessionDir, writeMeta, readMeta, listSessions, isRunning, getLatestSessionForRepo } from './state.mjs';
+import { initSessionDir, writeMeta, readMeta, updateMeta, safeUpdateMeta, listSessions, isRunning, getLatestSessionForRepo } from './state.mjs';
 import { startBackground, cancelSession, getSessionsDir, listCheckpoints, restoreCheckpoint } from './job-control.mjs';
 import { findRepoRoot, readRepoSession, writeRepoSession } from './workspace.mjs';
 import { renderReview, renderExplore, renderReport } from './render.mjs';
@@ -64,60 +64,82 @@ async function runDispatch(opts) {
   const tag = opts.tag || '';
   const touchesPaths = opts.touches_paths ? opts.touches_paths.split(',').map((s) => s.trim()).filter(Boolean) : [];
 
-  // Handle --resume: read latest session and optionally restore checkpoint
-  if (opts.resume === true || opts.resume === 'true') {
-    const latest = await readRepoSession(repoPath);
-    if (latest) {
-      // Try auto-restore checkpoint
-      const forceResume = opts.force_resume === true || opts.force_resume === 'true';
-      if (!forceResume) {
-        const checkpoints = await listCheckpoints(repoPath);
-        const cp = checkpoints.find((c) => c.session_id === latest);
-        if (cp) {
-          const restored = await restoreCheckpoint(latest, repoPath);
-          if (!restored.ok) {
-            return { status: 'blocked', reason: 'checkpoint-conflict', session_id: latest, error: restored.error, exitCode: 5 };
+  // Write initial meta envelope BEFORE any awaitable that can throw — guarantees
+  // safeUpdateMeta in the catch handler always has a file to merge into.
+  // baseline_sha is filled in after `git rev-parse` resolves below.
+  await writeMeta(sessionId, {
+    session_id: sessionId,
+    agent_file: agentFile,
+    prompt,
+    model,
+    started_at: new Date().toISOString(),
+    status: 'running',
+    repo_path: repoPath,
+    mode,
+    auto_commit_policy: autoCommitPolicy,
+    tag,
+    touches_paths: touchesPaths,
+    baseline_sha: '',
+  });
+
+  try {
+    // Handle --resume: read latest session and optionally restore checkpoint
+    if (opts.resume === true || opts.resume === 'true') {
+      const latest = await readRepoSession(repoPath);
+      if (latest) {
+        const forceResume = opts.force_resume === true || opts.force_resume === 'true';
+        if (!forceResume) {
+          const checkpoints = await listCheckpoints(repoPath);
+          const cp = checkpoints.find((c) => c.session_id === latest);
+          if (cp) {
+            const restored = await restoreCheckpoint(latest, repoPath);
+            if (!restored.ok) {
+              await updateMeta(sessionId, { status: 'blocked', reason: 'checkpoint-conflict', finished_at: new Date().toISOString() });
+              return { status: 'blocked', reason: 'checkpoint-conflict', session_id: latest, error: restored.error, exitCode: 5 };
+            }
           }
         }
+        const resumePrompt = `Continue from previous session ${latest}.\n\n${prompt}`;
+        opts.prompt = resumePrompt;
       }
-      // Prepend resume continuity
-      const resumePrompt = `Continue from previous session ${latest}.\n\n${prompt}`;
-      opts.prompt = resumePrompt;
     }
-  }
 
-  // Resolve baseline SHA
-  let baselineSha = '';
-  try {
-    const { execFile } = await import('node:child_process');
-    baselineSha = (await new Promise((resolve) => {
-      execFile('git', ['rev-parse', 'HEAD'], { cwd: repoPath }, (err, stdout) => {
-        resolve(err ? '' : stdout.trim());
-      });
-    })) || '';
-  } catch (e) {
-    await warn('broker', e, 'info');
-    baselineSha = '';
-  }
+    // Resolve baseline SHA
+    let baselineSha = '';
+    try {
+      const { execFile } = await import('node:child_process');
+      baselineSha = (await new Promise((resolve) => {
+        execFile('git', ['rev-parse', 'HEAD'], { cwd: repoPath }, (err, stdout) => {
+          resolve(err ? '' : stdout.trim());
+        });
+      })) || '';
+    } catch (e) {
+      await warn('broker', e, 'info');
+      baselineSha = '';
+    }
+    await updateMeta(sessionId, { baseline_sha: baselineSha });
 
-  // Origin-state awareness
-  if (!forceDispatch && touchesPaths.length > 0) {
-    const origin = await fetchAndCompare(touchesPaths, repoPath);
-    if (origin.diverged) {
-      return { status: 'blocked', reason: 'origin-diverged', conflicting_paths: origin.conflicting_paths, exitCode: 2 };
+    // Origin-state awareness
+    if (!forceDispatch && touchesPaths.length > 0) {
+      const origin = await fetchAndCompare(touchesPaths, repoPath);
+      if (origin.diverged) {
+        await updateMeta(sessionId, { status: 'blocked', reason: 'origin-diverged', finished_at: new Date().toISOString() });
+        return { status: 'blocked', reason: 'origin-diverged', conflicting_paths: origin.conflicting_paths, exitCode: 2 };
+      }
     }
-  }
 
-  // Preflight checks
-  if (!skipPreflight && opts.task_path) {
-    const pf = await preflight(path.resolve(opts.task_path), repoPath);
-    if (pf.status === 'already-done') {
-      return { status: 'skipped', reason: 'already-done', findings: pf.findings, exitCode: 0 };
+    // Preflight checks
+    if (!skipPreflight && opts.task_path) {
+      const pf = await preflight(path.resolve(opts.task_path), repoPath);
+      if (pf.status === 'already-done') {
+        await updateMeta(sessionId, { status: 'skipped', reason: 'already-done', finished_at: new Date().toISOString() });
+        return { status: 'skipped', reason: 'already-done', findings: pf.findings, exitCode: 0 };
+      }
+      if (pf.status === 'buggy-evals') {
+        await updateMeta(sessionId, { status: 'blocked', reason: 'buggy-evals', finished_at: new Date().toISOString() });
+        return { status: 'blocked', reason: 'buggy-evals', findings: pf.findings, exitCode: 3 };
+      }
     }
-    if (pf.status === 'buggy-evals') {
-      return { status: 'blocked', reason: 'buggy-evals', findings: pf.findings, exitCode: 3 };
-    }
-  }
 
   // Context injection
   let finalPrompt = opts.prompt;
@@ -190,116 +212,134 @@ async function runDispatch(opts) {
     }
   }
 
-  // Plan review via Codex (optional)
-  if (planReview && opts.task_path) {
-    try {
-      const taskSpec = await readFile(path.resolve(opts.task_path), 'utf-8');
-      const review = await codexReview(buildPlanReviewPrompt(taskSpec, ''), {
-        outputDir: path.join(repoPath, '.kimi', 'state'),
-        taskId: sessionId,
-      });
-      if (review.verdict === 'CONCERN' || review.verdict === 'DIFFERENT_APPROACH') {
-        return { status: 'paused', reason: 'plan-review', verdict: review.verdict, detail: review.reason, exitCode: 4 };
-      }
-    } catch (e) {
-      await warn('codex', e, 'warning');
-    }
-  }
-
-  if (background) {
-    const result = await startBackground({
-      sessionId, agentFile, prompt: finalPrompt, model, mode,
-      autoCommitPolicy, tag, touchesPaths, baselineSha,
-    });
-    return { ...result, exitCode: 0 };
-  }
-
-  // Foreground
-  await writeMeta(sessionId, {
-    session_id: sessionId, agent_file: agentFile, prompt: finalPrompt, model,
-    started_at: new Date().toISOString(), status: 'running',
-    repo_path: repoPath, mode, auto_commit_policy: autoCommitPolicy,
-    tag, touches_paths: touchesPaths, baseline_sha: baselineSha,
-  });
-
-  const result = await invokeKimi({ prompt: finalPrompt, agentFile, model, sessionId, background: false });
-
-  // Capture diff immediately after Kimi returns
-  const postDiff = await getWorkingDiff(repoPath);
-
-  // Post-write API validation (Tavily)
-  const forceCommit = opts.force_commit === true || opts.force_commit === 'true';
-  if (postDiff.trim()) {
-    try {
-      const refs = extractApiReferences(postDiff);
-      if (refs.length > 0) {
-        const validation = await validateApiReferences(refs);
-        if (!validation.valid && !forceCommit) {
-          await writeMeta(sessionId, {
-            status: result.exitCode === 0 ? 'completed' : 'failed',
-            exit_code: result.exitCode, finished_at: new Date().toISOString(),
-            api_validation_concerns: validation.concerns, committed: false,
-          });
-          await writeRepoSession(repoPath, sessionId);
-          return { ...result, api_validation: validation.concerns, committed: false, exitCode: 0 };
-        }
-      }
-    } catch (e) {
-      await warn('validate-api', e, 'warning');
-    }
-  }
-
-  // Diff review via Codex (optional)
-  if (diffReview) {
-    try {
-      if (postDiff.trim()) {
-        const review = await codexReview(buildDiffReviewPrompt(postDiff, sessionId), {
-          outputDir: path.join(repoPath, '.kimi', 'state'), taskId: sessionId,
+    // Plan review via Codex (optional)
+    if (planReview && opts.task_path) {
+      try {
+        const taskSpec = await readFile(path.resolve(opts.task_path), 'utf-8');
+        const review = await codexReview(buildPlanReviewPrompt(taskSpec, ''), {
+          outputDir: path.join(repoPath, '.kimi', 'state'),
+          taskId: sessionId,
         });
-        if (review.verdict === 'REVISE' || review.verdict === 'REJECT') {
-          await writeMeta(sessionId, {
-            status: result.exitCode === 0 ? 'completed' : 'failed',
-            exit_code: result.exitCode, finished_at: new Date().toISOString(),
-            diff_review_verdict: review.verdict, committed: false,
+        if (review.verdict === 'CONCERN' || review.verdict === 'DIFFERENT_APPROACH') {
+          await updateMeta(sessionId, { status: 'paused', reason: 'plan-review', verdict: review.verdict, finished_at: new Date().toISOString() });
+          return { status: 'paused', reason: 'plan-review', verdict: review.verdict, detail: review.reason, exitCode: 4 };
+        }
+      } catch (e) {
+        await warn('codex', e, 'warning');
+      }
+    }
+
+    if (background) {
+      // Update meta with final prompt + baseline_sha before handoff so the background
+      // close handler in job-control.mjs has the current envelope to merge into.
+      await updateMeta(sessionId, { prompt: finalPrompt });
+      const result = await startBackground({
+        sessionId, agentFile, prompt: finalPrompt, model, mode,
+        autoCommitPolicy, tag, touchesPaths, baselineSha,
+      });
+      return { ...result, exitCode: 0 };
+    }
+
+    // Foreground: merge the assembled prompt into the already-written meta
+    await updateMeta(sessionId, { prompt: finalPrompt });
+
+    const result = await invokeKimi({ prompt: finalPrompt, agentFile, model, sessionId, background: false });
+
+    // Capture diff immediately after Kimi returns
+    const postDiff = await getWorkingDiff(repoPath);
+
+    // Post-write API validation (Tavily)
+    const forceCommit = opts.force_commit === true || opts.force_commit === 'true';
+    if (postDiff.trim()) {
+      try {
+        const refs = extractApiReferences(postDiff);
+        if (refs.length > 0) {
+          const validation = await validateApiReferences(refs);
+          if (!validation.valid && !forceCommit) {
+            await updateMeta(sessionId, {
+              status: result.exitCode === 0 ? 'completed' : 'failed',
+              exit_code: result.exitCode, finished_at: new Date().toISOString(),
+              api_validation_concerns: validation.concerns, committed: false,
+            });
+            await writeRepoSession(repoPath, sessionId);
+            return { ...result, api_validation: validation.concerns, committed: false, exitCode: 0 };
+          }
+        }
+      } catch (e) {
+        await warn('validate-api', e, 'warning');
+      }
+    }
+
+    // Diff review via Codex (optional)
+    if (diffReview) {
+      try {
+        if (postDiff.trim()) {
+          const review = await codexReview(buildDiffReviewPrompt(postDiff, sessionId), {
+            outputDir: path.join(repoPath, '.kimi', 'state'), taskId: sessionId,
           });
-          await writeRepoSession(repoPath, sessionId);
-          return { ...result, diff_review: review.verdict, committed: false, exitCode: 0 };
+          if (review.verdict === 'REVISE' || review.verdict === 'REJECT') {
+            await updateMeta(sessionId, {
+              status: result.exitCode === 0 ? 'completed' : 'failed',
+              exit_code: result.exitCode, finished_at: new Date().toISOString(),
+              diff_review_verdict: review.verdict, committed: false,
+            });
+            await writeRepoSession(repoPath, sessionId);
+            return { ...result, diff_review: review.verdict, committed: false, exitCode: 0 };
+          }
         }
+      } catch (e) {
+        await warn('codex', e, 'warning');
       }
-    } catch (e) {
-      await warn('codex', e, 'warning');
     }
-  }
 
-  await writeMeta(sessionId, {
-    status: result.exitCode === 0 ? 'completed' : 'failed',
-    exit_code: result.exitCode, finished_at: new Date().toISOString(),
-  });
+    await updateMeta(sessionId, {
+      status: result.exitCode === 0 ? 'completed' : 'failed',
+      exit_code: result.exitCode, finished_at: new Date().toISOString(),
+    });
 
-  await writeRepoSession(repoPath, sessionId);
+    await writeRepoSession(repoPath, sessionId);
 
-  // External doc monitoring: check for changes before commit
-  if (externalDocs.length > 0) {
+    // External doc monitoring: check for changes before commit
+    if (externalDocs.length > 0) {
+      try {
+        const snapshotDir = path.join(repoPath, '.kimi', 'state', 'monitors');
+        for (const url of externalDocs) {
+          const check = await checkForChanges(url, snapshotDir);
+          if (check && check.changed) {
+            await warn('monitor', `External docs changed during session: ${url}`, 'warning');
+          }
+        }
+      } catch (e) {
+        await warn('monitor', e, 'info');
+      }
+    }
+
+    return { ...result, exitCode: 0 };
+  } catch (err) {
+    // Bootstrap-safe: writeMeta at the top of runDispatch guarantees meta exists,
+    // but safeUpdateMeta falls back to writeMeta if the file was deleted/missing.
     try {
-      const snapshotDir = path.join(repoPath, '.kimi', 'state', 'monitors');
-      for (const url of externalDocs) {
-        const check = await checkForChanges(url, snapshotDir);
-        if (check && check.changed) {
-          await warn('monitor', `External docs changed during session: ${url}`, 'warning');
-        }
+      await safeUpdateMeta(sessionId, {
+        status: 'failed',
+        error: err.message,
+        finished_at: new Date().toISOString(),
+      });
+    } catch (innerErr) {
+      await warn('broker', innerErr, 'error');
+    }
+    throw err;
+  } finally {
+    // Always attempt to attach telemetry (warns-not-throws preserves prior behavior).
+    // Skips silently for background dispatches where Kimi is still running — the
+    // background close handler in job-control.mjs:71 attaches telemetry on close.
+    if (!background) {
+      try {
+        await attachTelemetry(sessionId, getSessionsDir());
+      } catch (e) {
+        await warn('telemetry', e, 'warning');
       }
-    } catch (e) {
-      await warn('monitor', e, 'info');
     }
   }
-
-  try {
-    await attachTelemetry(sessionId, getSessionsDir());
-  } catch (e) {
-    await warn('telemetry', e, 'warning');
-  }
-
-  return { ...result, exitCode: 0 };
 }
 
 async function waitForSessions(sessionIds, timeoutMs = 600000) {

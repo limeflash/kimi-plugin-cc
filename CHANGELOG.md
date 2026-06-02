@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.2
+
+### Fixed
+
+- **Broker session metadata preservation** — the foreground dispatch path in `runDispatch` (commands.mjs) called `writeMeta` (full file overwrite) at three terminal sites, erasing the 11 initial-write fields (`session_id`, `agent_file`, `prompt`, `model`, `started_at`, `repo_path`, `mode`, `auto_commit_policy`, `tag`, `touches_paths`, `baseline_sha`). All three terminal sites + the two early-return branches now use `updateMeta` (read-merge-write). Background close handler (`job-control.mjs`) and `cancelSession` swapped to the same primitive for consistency.
+
+- **Broker pipeline error recovery** — `runDispatch` had no top-level `try/catch/finally`, so an exception anywhere between `invokeKimi` and `attachTelemetry` left the session in an inconsistent terminal state (`status: 'running'`, `running: false`) forever. The body is now wrapped: `catch` calls `safeUpdateMeta({ status: 'failed', error, finished_at })` and re-throws; `finally` attaches telemetry on foreground dispatches. `safeUpdateMeta` (new) bootstraps a minimum-viable envelope if the initial `writeMeta` did not fire — closes the catch-handler-crashes-before-meta-exists trap.
+
+- **Initial meta envelope written before any awaitable** — `writeMeta` now fires at the very top of `runDispatch` (before resume / origin-check / preflight / context injection), so every code path past that point can safely call `updateMeta`. Removes the gap where blocked-early returns (`origin-diverged`, `buggy-evals`, `already-done`, `plan-paused`, `checkpoint-conflict`) left no session record.
+
+### Added
+
+- `safeUpdateMeta(sessionId, patch)` — `updateMeta` with bootstrap fallback to `writeMeta`. Used by the new `catch` handler.
+- `metaExists(sessionId)` — convenience predicate over `meta.json` presence.
+- 6 new tests (4 in `tests/state.test.mjs` covering the 12-field envelope preservation and bootstrap-safe helpers; 2 in `tests/integration.test.mjs` covering the non-zero-exit close-handler path and `cancelSession` envelope preservation). The existing `startBackground end-to-end with mock spawn` test was extended with explicit assertions over all 11 initial fields after the close handler fires.
+
 ## 0.3.1
 
 ### Fixed

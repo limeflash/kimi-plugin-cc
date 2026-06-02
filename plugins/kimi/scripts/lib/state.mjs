@@ -33,6 +33,24 @@ export async function updateMeta(sessionId, patch) {
   await writeMeta(sessionId, meta);
 }
 
+export async function metaExists(sessionId) {
+  const file = path.join(getSessionsDir(), sessionId, 'meta.json');
+  try {
+    await stat(file);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function safeUpdateMeta(sessionId, patch) {
+  if (await metaExists(sessionId)) {
+    await updateMeta(sessionId, patch);
+  } else {
+    await writeMeta(sessionId, { session_id: sessionId, ...patch });
+  }
+}
+
 export async function listSessions() {
   try {
     const dirs = await readdir(getSessionsDir());
