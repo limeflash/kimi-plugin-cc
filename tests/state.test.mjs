@@ -9,6 +9,8 @@ import {
   writeMeta,
   readMeta,
   updateMeta,
+  metaExists,
+  safeUpdateMeta,
   listSessions,
   isRunning,
   getLatestSessionForRepo,
@@ -55,6 +57,99 @@ test('updateMeta merges patches', async () => {
     const read = await readMeta('sess-2');
     assert.equal(read.status, 'completed');
     assert.equal(read.finished_at, '2026-01-01T00:00:00Z');
+  } finally {
+    process.env.KIMI_PLUGIN_DATA = prevEnv;
+    cleanupTempDir(tmp);
+  }
+});
+
+test('updateMeta preserves the initial 12-field envelope on terminal write', async () => {
+  const tmp = makeTempDir();
+  const prevEnv = process.env.KIMI_PLUGIN_DATA;
+  process.env.KIMI_PLUGIN_DATA = tmp;
+
+  try {
+    const initial = {
+      session_id: 'sess-preserve',
+      agent_file: '/fake/agent.yaml',
+      prompt: 'do the thing',
+      model: 'kimi-k2',
+      started_at: '2026-06-01T18:00:00Z',
+      status: 'running',
+      repo_path: '/fake/repo',
+      mode: 'crank',
+      auto_commit_policy: 'on-clean',
+      tag: 'pilot',
+      touches_paths: ['a.py', 'b.py'],
+      baseline_sha: 'abc1234',
+    };
+    await writeMeta('sess-preserve', initial);
+    await updateMeta('sess-preserve', {
+      status: 'completed',
+      exit_code: 0,
+      finished_at: '2026-06-01T18:05:00Z',
+    });
+    const read = await readMeta('sess-preserve');
+    for (const k of Object.keys(initial)) {
+      const expected = k === 'status' ? 'completed' : initial[k];
+      assert.deepEqual(read[k], expected, `field ${k} not preserved`);
+    }
+    assert.equal(read.exit_code, 0);
+    assert.equal(read.finished_at, '2026-06-01T18:05:00Z');
+  } finally {
+    process.env.KIMI_PLUGIN_DATA = prevEnv;
+    cleanupTempDir(tmp);
+  }
+});
+
+test('metaExists returns true after write and false for unknown session', async () => {
+  const tmp = makeTempDir();
+  const prevEnv = process.env.KIMI_PLUGIN_DATA;
+  process.env.KIMI_PLUGIN_DATA = tmp;
+
+  try {
+    await writeMeta('sess-exists', { session_id: 'sess-exists' });
+    assert.equal(await metaExists('sess-exists'), true);
+    assert.equal(await metaExists('sess-missing'), false);
+  } finally {
+    process.env.KIMI_PLUGIN_DATA = prevEnv;
+    cleanupTempDir(tmp);
+  }
+});
+
+test('safeUpdateMeta merges existing meta', async () => {
+  const tmp = makeTempDir();
+  const prevEnv = process.env.KIMI_PLUGIN_DATA;
+  process.env.KIMI_PLUGIN_DATA = tmp;
+
+  try {
+    await writeMeta('sess-safe-existing', { session_id: 'sess-safe-existing', status: 'running', tag: 'pilot' });
+    await safeUpdateMeta('sess-safe-existing', { status: 'failed', error: 'boom' });
+    const read = await readMeta('sess-safe-existing');
+    assert.equal(read.status, 'failed');
+    assert.equal(read.error, 'boom');
+    assert.equal(read.tag, 'pilot');
+  } finally {
+    process.env.KIMI_PLUGIN_DATA = prevEnv;
+    cleanupTempDir(tmp);
+  }
+});
+
+test('safeUpdateMeta bootstraps a missing meta with minimum envelope', async () => {
+  const tmp = makeTempDir();
+  const prevEnv = process.env.KIMI_PLUGIN_DATA;
+  process.env.KIMI_PLUGIN_DATA = tmp;
+
+  try {
+    await safeUpdateMeta('sess-safe-new', {
+      status: 'failed',
+      error: 'thrown before writeMeta',
+      finished_at: '2026-06-01T18:10:00Z',
+    });
+    const read = await readMeta('sess-safe-new');
+    assert.equal(read.session_id, 'sess-safe-new');
+    assert.equal(read.status, 'failed');
+    assert.equal(read.error, 'thrown before writeMeta');
   } finally {
     process.env.KIMI_PLUGIN_DATA = prevEnv;
     cleanupTempDir(tmp);

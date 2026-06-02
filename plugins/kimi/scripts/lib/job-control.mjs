@@ -6,6 +6,7 @@ import crypto from 'node:crypto';
 import { findRepoRoot, writeRepoSession } from './workspace.mjs';
 import { attachTelemetry } from './telemetry.mjs';
 import { warn } from './warn.mjs';
+import { updateMeta } from './state.mjs';
 
 function getPluginRoot() {
   return process.env.KIMI_PLUGIN_DATA
@@ -67,14 +68,17 @@ export async function startBackground(opts) {
   // Track as latest session for this repo
   await writeRepoSession(repoPath, sessionId);
 
-  // Watch for completion and update meta + telemetry
+  // Watch for completion and update meta + telemetry.
+  // updateMeta preserves the 12 initial-write fields (session_id, agent_file,
+  // prompt, model, started_at, repo_path, mode, auto_commit_policy, tag,
+  // touches_paths, baseline_sha) by reading-then-merging.
   child.on('close', async (code) => {
     try {
-      const m = JSON.parse(await readFile(path.join(sessDir, 'meta.json'), 'utf-8'));
-      m.status = code === 0 ? 'completed' : 'failed';
-      m.exit_code = code ?? 1;
-      m.finished_at = new Date().toISOString();
-      await writeFile(path.join(sessDir, 'meta.json'), JSON.stringify(m, null, 2));
+      await updateMeta(sessionId, {
+        status: code === 0 ? 'completed' : 'failed',
+        exit_code: code ?? 1,
+        finished_at: new Date().toISOString(),
+      });
       await attachTelemetry(sessionId, getSessionsDir());
     } catch (e) {
       await warn('job-control', e, 'error');
@@ -99,12 +103,11 @@ export async function cancelSession(sessionId) {
   // Checkpoint: stash touched files if any
   await stashCheckpoint(sessionId);
 
-  const metaPath = path.join(sessionsDir, sessionId, 'meta.json');
   try {
-    const m = JSON.parse(await readFile(metaPath, 'utf-8'));
-    m.status = 'cancelled';
-    m.cancelled_at = new Date().toISOString();
-    await writeFile(metaPath, JSON.stringify(m, null, 2));
+    await updateMeta(sessionId, {
+      status: 'cancelled',
+      cancelled_at: new Date().toISOString(),
+    });
   } catch (e) {
     await warn('job-control', e, 'error');
   }
