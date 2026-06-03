@@ -59,6 +59,27 @@ Three agent configurations with different tool access:
 - Project-level: `.kimi/config.toml`
 - Plugin data: `~/.kimi-plugin-cc/` (or `KIMI_PLUGIN_DATA` env var)
 
+### Runtime env contract
+
+| Env var | Default | Effect |
+|---------|---------|--------|
+| `KIMI_PLUGIN_DATA` | `~/.kimi-plugin-cc/` | Root dir for session state |
+| `KIMI_DISPATCH_TIMEOUT_MS` | `1800000` (30m) | Hard wall-clock timeout per crank (`runOnce` foreground). On expiry: SIGTERM, then SIGKILL after 2s. |
+| `KIMI_IDLE_TIMEOUT_MS` | `300000` (5m) | Idle-output watchdog (foreground `runOnce` and detached background spawn). Kills a crank that stops emitting output. |
+
+A timeout is **terminal** — never retried (only exit-75 transient errors retry, up to 3x). It resolves with the internal sentinel `TIMEOUT_EXIT_CODE` (124) and surfaces to the supervisor as broker exit code **6** with `status: failed`, `reason: timeout`, `committed: false`.
+
+### Broker exit codes (`dispatch`)
+
+| Code | Meaning |
+|------|---------|
+| 0 | ok / dispatched |
+| 2 | origin-diverged |
+| 3 | buggy-evals |
+| 4 | review-pause (plan/diff review or api-validation concern) |
+| 5 | checkpoint-conflict |
+| 6 | timeout (wall-clock or idle-output watchdog killed a hung crank) |
+
 ## Testing
 
 - Unit tests: `npm test` (Node.js built-in test runner)

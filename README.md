@@ -337,6 +337,24 @@ Your configuration will be picked up based on:
 - user-level config in `~/.kimi/config.toml`
 - project-level overrides in `.kimi/config.toml`
 
+### Reliability & timeouts
+
+Every crank runs under two limits so a hung or looping Kimi process can't block you forever:
+
+- `KIMI_DISPATCH_TIMEOUT_MS` — hard wall-clock cap on a single crank. Default 30 minutes (`1800000`). This is the absolute ceiling, no matter what Kimi is doing.
+- `KIMI_IDLE_TIMEOUT_MS` — idle-output watchdog. Default 5 minutes (`300000`). If Kimi stops emitting output for this long, the crank is treated as stalled and killed — this catches loops and hangs that the wall-clock cap alone would let run for the full 30 minutes.
+
+When either limit fires, the crank is terminated (SIGTERM, then SIGKILL after 2s) and **fails fast with exit code 6**. A timeout is terminal — it is not retried. The session is marked `status: failed`, `reason: timeout`, and your work is left **uncommitted** so you can inspect the partial diff or resume it with `/kimi:crank --resume`.
+
+In a `crank-batch` wave, any session still stuck at the batch deadline is auto-cancelled (killed and marked `cancelled`) so one hung task can't pin the whole wave.
+
+Override a default per-task when you expect a long run:
+
+```bash
+export KIMI_DISPATCH_TIMEOUT_MS=5400000   # 90 minutes for a big refactor
+/kimi:crank tasks/T-large-migration.md
+```
+
 ### Moving The Work Over To Kimi
 
 Delegated tasks and any [stop gate](#what-does-the-review-gate-do) run can also be directly resumed inside Kimi by running `kimi resume` either with the specific session ID you received from running `/kimi:result` or `/kimi:status` or by selecting it from the list.
