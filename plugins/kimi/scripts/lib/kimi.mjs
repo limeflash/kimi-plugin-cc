@@ -23,6 +23,7 @@ function getPluginRoot() {
  * @param {string} [opts.model]
  * @param {string} [opts.sessionId]
  * @param {boolean} [opts.background=false]
+ * @param {string} [opts.cwd] - working directory for the kimi process (e.g. an isolated worktree). Defaults to process.cwd().
  * @param {string} [opts.outputFile] - where to write JSONL (defaults to session dir)
  * @returns {Promise<{sessionId: string, exitCode: number, retries: number, outputFile: string, finalMessage?: string}>}
  */
@@ -31,11 +32,13 @@ export async function invokeKimi(opts) {
   const sessDir = path.join(getPluginRoot(), 'sessions', sessionId);
   await mkdir(sessDir, { recursive: true });
 
+  const cwd = opts.cwd || process.cwd();
   const outputFile = opts.outputFile || path.join(sessDir, 'output.jsonl');
 
   const args = [
     '--print',
     '--yolo',
+    '--work-dir', cwd,
     '--output-format', 'stream-json',
     '--agent-file', opts.agentFile,
   ];
@@ -51,6 +54,7 @@ export async function invokeKimi(opts) {
     const err = createWriteStream(logFile);
 
     const child = spawn('kimi', args, {
+      cwd,
       detached: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -71,7 +75,7 @@ export async function invokeKimi(opts) {
   const maxRetries = 3;
 
   while (true) {
-    exitCode = await runOnce(args, outputFile);
+    exitCode = await runOnce(args, outputFile, cwd);
     if (exitCode !== 75 || retries >= maxRetries) break;
     retries++;
     await sleep(retries * 5000);
@@ -81,10 +85,11 @@ export async function invokeKimi(opts) {
   return { sessionId, exitCode, retries, outputFile, finalMessage };
 }
 
-function runOnce(args, outputFile) {
+function runOnce(args, outputFile, cwd) {
   return new Promise((resolve) => {
     const out = createWriteStream(outputFile);
     const child = spawn('kimi', args, {
+      cwd: cwd || process.cwd(),
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     child.stdout.pipe(out);

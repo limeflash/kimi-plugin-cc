@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.3.3
+
+> Surfaced by the first successful end-to-end Kimi crank (doc-link audit task).
+> Kimi did the work correctly, but the crank exposed defects that made autonomous,
+> supervised cranking untrustworthy. Diagnosed via a 3-agent root-cause + adversarial
+> review workflow; score 6.1/10 → 9.4/10.
+
+### Fixed
+
+- **Worktree isolation leak (blocker).** All three `spawn('kimi', ...)` calls omitted the `cwd` option, so the Kimi subprocess ran in the broker's launch directory (the main checkout) instead of the isolated worktree it was dispatched against. Proven: a crank dispatched from `.worktree/wt-.../` edited files in the MAIN checkout; the worktree's `touches_paths` files were untouched. Fix: thread `repoPath` through `invokeKimi`/`runOnce`/`startBackground` and set `{ cwd: repoPath }` on every spawn, plus pass the kimi CLI's own `--work-dir <repoPath>` flag (belt-and-suspenders). `startBackground` no longer re-resolves its own (wrong) repo root via `findRepoRoot` when the caller provides `repoPath`.
+
+- **Auto-commit policy was inert (blocker).** `auto_commit_policy` (`on`|`off`|`on-clean`) was plumbed end-to-end and rendered in reports, but NO code anywhere ran `git add`/`git commit` — `committed` was always written as literal `false` and `commit_sha` was never produced. Every crank left edits dangling in the working tree. Fix: new `lib/commit.mjs` (`shouldCommit` + `commitWork`) wired into the foreground path (after review/validation early-returns) and the background close handler. `on` always commits; `on-clean` commits only when exitCode===0 and retries===0; `off` skips. REVISE/REJECT/api-concern verdicts correctly leave work uncommitted. Captures the resulting SHA into meta.
+
+- **Telemetry envelope all-zeros (major).** `parseTelemetry` accumulated tokens from a top-level `obj.usage` object that Kimi's stream-json NEVER emits — guaranteed `{prompt_tokens:0, ...}` against every real session. Fix: rewrite against the actual schema (`{role, content, tool_calls}` where tool calls live in `tool_calls[].function.name`: ReadFile/Grep/Shell/StrReplaceFile). Tokens are ESTIMATED from content length (~4 chars/token) and flagged `estimated: true` (Kimi reports no counts anywhere — verified across output.jsonl, kimi.log, ~/.kimi/kimi.json). Phases derive from real tool-call ordering and scale into wall-clock via `started_at..finished_at`. Verified against the real session 4117d74d: 54,088 prompt + 8,816 completion tokens, $0.045 estimated, 19 reads / 19 writes / 2 verifies.
+
+### Changed
+
+- **Exit-code contract documented (major).** Codes 2 (origin-diverged), 3 (buggy-evals), 4 (review-pause), 5 (checkpoint-conflict), 6 (reserved) are now documented in `broker.mjs` usage(). The api-validation and diff-review early-returns no longer flatten to `exitCode: 0` — they surface code 4 with `status: 'paused'` + `reason`, so a supervising agent can branch on a blocked task instead of seeing false success.
+
+### Added
+
+- `lib/commit.mjs` — policy-aware durable commit primitive.
+- 4 new test files: `commit.test.mjs` (6 cases, real temp git repos), `telemetry-real.test.mjs` (3 cases, checked-in real-session fixture), `kimi-cwd.test.mjs` (2 cases, spawn-cwd injection), `exit-codes.test.mjs` (2 cases, contract assertions). The existing mock-spawn test's telemetry assertions updated to the estimated-token model.
+
+### Deferred to v0.3.4
+
+- Kimi subprocess timeout + idle-output watchdog (a hung crank still blocks indefinitely).
+- `waitForSessions` should actively `cancelSession()` stuck ids, not just warn.
+- Recover REAL token counts if a future Kimi CLI exposes usage; drop the `estimated` flag.
+
 ## 0.3.2
 
 ### Fixed

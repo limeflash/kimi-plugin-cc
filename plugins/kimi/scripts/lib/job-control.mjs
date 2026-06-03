@@ -6,7 +6,8 @@ import crypto from 'node:crypto';
 import { findRepoRoot, writeRepoSession } from './workspace.mjs';
 import { attachTelemetry } from './telemetry.mjs';
 import { warn } from './warn.mjs';
-import { updateMeta } from './state.mjs';
+import { updateMeta, readMeta } from './state.mjs';
+import { commitWork } from './commit.mjs';
 
 function getPluginRoot() {
   return process.env.KIMI_PLUGIN_DATA
@@ -23,7 +24,7 @@ export async function startBackground(opts) {
   const sessDir = path.join(getSessionsDir(), sessionId);
   await mkdir(sessDir, { recursive: true });
 
-  const repoPath = await findRepoRoot();
+  const repoPath = opts.repoPath || await findRepoRoot();
 
   const meta = {
     session_id: sessionId,
@@ -43,6 +44,7 @@ export async function startBackground(opts) {
 
   const args = [
     '--print',
+    '--work-dir', repoPath,
     '--output-format', 'stream-json',
     '--agent-file', opts.agentFile,
   ];
@@ -56,6 +58,7 @@ export async function startBackground(opts) {
 
   const spawnFn = opts.spawnFn || spawn;
   const child = spawnFn('kimi', args, {
+    cwd: repoPath,
     detached: true,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -79,6 +82,13 @@ export async function startBackground(opts) {
         exit_code: code ?? 1,
         finished_at: new Date().toISOString(),
       });
+      try {
+        const m = await readMeta(sessionId);
+        const c = await commitWork(repoPath, sessionId, m, { exitCode: code ?? 1, retries: 0 });
+        await updateMeta(sessionId, { committed: c.committed, commit_sha: c.commit_sha, commit_reason: c.reason });
+      } catch (e) {
+        await warn('commit', e, 'warning');
+      }
       await attachTelemetry(sessionId, getSessionsDir());
     } catch (e) {
       await warn('job-control', e, 'error');
