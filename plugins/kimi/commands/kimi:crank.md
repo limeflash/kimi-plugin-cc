@@ -77,3 +77,18 @@ allowed-tools: [Bash, Read, Write, Edit, Task]
 - Uses `coder.yaml` → write-capable, scoped to working directory.
 - `--resume` continues the latest repo session; `--fresh` starts clean.
 - `--auto-commit` policies: `on` (always commit), `off` (never commit), `on-clean` (default: commit only if evals pass on first try).
+
+## Exit codes
+
+The broker returns one of these on `dispatch`:
+
+```
+0  ok / dispatched
+2  origin-diverged       (local branch diverged from origin on touched paths)
+3  buggy-evals           (preflight found broken eval bodies — fix the spec)
+4  review-pause          (plan-review, diff-review, or api-validation flagged it)
+5  checkpoint-conflict   (resume could not re-apply the stashed checkpoint)
+6  timeout               (wall-clock or idle-output watchdog killed a hung crank)
+```
+
+**Exit code 6 means the crank timed out.** It hit either the wall-clock cap (`KIMI_DISPATCH_TIMEOUT_MS`, default 30m) or the idle-output watchdog (`KIMI_IDLE_TIMEOUT_MS`, default 5m). A timeout is terminal — it is not retried. The session is marked `status: failed`, `reason: timeout`, and the work is left **uncommitted** so you can inspect the partial diff or resume with `/kimi:crank --resume`.

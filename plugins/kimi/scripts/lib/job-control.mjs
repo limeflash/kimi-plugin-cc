@@ -68,6 +68,27 @@ export async function startBackground(opts) {
 
   await writeFile(path.join(sessDir, 'pid'), String(child.pid));
 
+  // Idle-output watchdog for the detached background crank: if no new output
+  // for KIMI_IDLE_TIMEOUT_MS (default 5m), the crank is hung — SIGTERM/SIGKILL
+  // it so it can't pin a wave indefinitely. The close handler then marks it
+  // failed:timeout. (Skipped for injected spawnFn in tests, which has no real pid.)
+  const idleMs = Number(process.env.KIMI_IDLE_TIMEOUT_MS || 5 * 60 * 1000);
+  if (!opts.spawnFn && child.pid) {
+    let lastOutput = Date.now();
+    child.stdout.on('data', () => { lastOutput = Date.now(); });
+    child.stderr.on('data', () => { lastOutput = Date.now(); });
+    const idleTimer = setInterval(() => {
+      if (Date.now() - lastOutput > idleMs) {
+        clearInterval(idleTimer);
+        try { process.kill(child.pid, 'SIGTERM'); } catch { /* gone */ }
+        setTimeout(() => { try { process.kill(child.pid, 'SIGKILL'); } catch { /* gone */ } }, 2000);
+        updateMeta(sessionId, { timed_out: true, reason: 'idle-timeout' }).catch(() => {});
+      }
+    }, Math.min(idleMs, 30000));
+    idleTimer.unref?.();
+    child.on('close', () => clearInterval(idleTimer));
+  }
+
   // Track as latest session for this repo
   await writeRepoSession(repoPath, sessionId);
 
