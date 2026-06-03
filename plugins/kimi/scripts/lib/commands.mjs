@@ -246,6 +246,17 @@ async function runDispatch(opts) {
 
     const result = await invokeKimi({ prompt: finalPrompt, agentFile, model, sessionId, background: false, cwd: repoPath });
 
+    // Timeout / idle-watchdog kill is terminal — fail fast with exit code 6,
+    // leave work uncommitted so the supervisor can inspect or resume.
+    if (result.timedOut) {
+      await updateMeta(sessionId, {
+        status: 'failed', reason: 'timeout', exit_code: result.exitCode,
+        committed: false, finished_at: new Date().toISOString(),
+      });
+      await writeRepoSession(repoPath, sessionId);
+      return { ...result, status: 'failed', reason: 'timeout', committed: false, exitCode: 6 };
+    }
+
     // Capture diff immediately after Kimi returns
     const postDiff = await getWorkingDiff(repoPath);
 
@@ -373,7 +384,18 @@ async function waitForSessions(sessionIds, timeoutMs = 600000) {
     }
     if (pending.size > 0) await new Promise((r) => setTimeout(r, 2000));
   }
-  return Array.from(pending);
+  // Anything still pending at the deadline is stuck — actively cancel it
+  // (kills the process + marks meta cancelled) rather than leaking a hung
+  // child and an indeterminate working tree.
+  const stuck = Array.from(pending);
+  for (const id of stuck) {
+    try {
+      await cancelSession(id);
+    } catch (e) {
+      await warn('batch', e, 'warning');
+    }
+  }
+  return stuck;
 }
 
 async function parseTaskFile(taskPath) {

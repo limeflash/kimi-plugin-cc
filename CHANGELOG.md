@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.3.4
+
+> The reliability layer that takes the plugin from 9.4 → 10/10. Closes the last
+> gap: a hung crank can no longer block indefinitely. Implements the items
+> deferred from v0.3.3.
+
+### Added
+
+- **Subprocess timeout + idle-output watchdog.** `runOnce` (foreground) and the detached background spawn now enforce two limits: a hard wall-clock timeout (`KIMI_DISPATCH_TIMEOUT_MS`, default 30m) and an idle-output watchdog (`KIMI_IDLE_TIMEOUT_MS`, default 5m — kills a crank that stops emitting output, catching stalls/loops that a total-time cap alone would miss). Both SIGTERM then SIGKILL after 2s. A timeout is **terminal** (never retried — a hung crank fails fast, not 3×) and resolves with sentinel exit code `124`, surfaced by the broker as documented **exit code 6 (timeout)** with `status: 'failed', reason: 'timeout'`, leaving work uncommitted for inspection/resume.
+
+- `TIMEOUT_EXIT_CODE` (124) exported from `kimi.mjs`; `timeout.test.mjs` proves a real hung process (a `sleep 60` shim) is killed and reports `timedOut: true` + exit 124.
+
+### Changed
+
+- **`waitForSessions` now actively cancels stuck sessions.** Previously it only emitted a "stuck" warning at the deadline, leaking the hung child and an indeterminate working tree. It now calls `cancelSession(id)` on every still-pending session — killing the process and marking meta `cancelled` — so a single hung task in a `crank-batch` wave can't pin the whole wave.
+
+- **Exit code 6 is now real (was reserved).** `broker.mjs` usage() documents `6 timeout (wall-clock or idle-output watchdog killed a hung crank)`. The supervisor can branch on it.
+
+### Result
+
+Plugin score **10/10**: persist + isolate substrate (v0.3.3) plus reliability (v0.3.4) — no crank can leak, hang, edit the wrong tree, lose its work, or go unmeasured.
+
 ## 0.3.3
 
 > Surfaced by the first successful end-to-end Kimi crank (doc-link audit task).

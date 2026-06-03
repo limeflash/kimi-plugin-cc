@@ -58,7 +58,7 @@ Exit codes (dispatch):
   3  buggy-evals       (preflight found broken eval bodies — fix the spec)
   4  review-pause      (plan-review or diff-review returned CONCERN/REVISE/REJECT)
   5  checkpoint-conflict (resume could not re-apply the stashed checkpoint)
-  6  reserved          (timeout/crash — wired in a later release)
+  6  timeout           (wall-clock or idle-output watchdog killed a hung crank)
 `);
   process.exit(1);
 }

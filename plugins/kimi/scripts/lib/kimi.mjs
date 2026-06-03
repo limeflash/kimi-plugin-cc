@@ -69,23 +69,31 @@ export async function invokeKimi(opts) {
     return { sessionId, exitCode: null, retries: 0, outputFile, status: 'started', pid: child.pid };
   }
 
-  // Foreground: capture with retry on exit 75
+  // Foreground: capture with retry on exit 75 (transient). A timeout (124) is
+  // terminal — never retried, since a hung crank should fail fast, not 3x.
   let exitCode = 0;
   let retries = 0;
   const maxRetries = 3;
+  const limits = { totalMs: opts.totalTimeoutMs, idleMs: opts.idleTimeoutMs };
 
   while (true) {
-    exitCode = await runOnce(args, outputFile, cwd);
+    exitCode = await runOnce(args, outputFile, cwd, limits);
     if (exitCode !== 75 || retries >= maxRetries) break;
     retries++;
     await sleep(retries * 5000);
   }
 
+  const timedOut = exitCode === TIMEOUT_EXIT_CODE;
   const finalMessage = await extractFinalMessage(outputFile);
-  return { sessionId, exitCode, retries, outputFile, finalMessage };
+  return { sessionId, exitCode, retries, outputFile, finalMessage, timedOut };
 }
 
-function runOnce(args, outputFile, cwd) {
+export const TIMEOUT_EXIT_CODE = 124;
+
+function runOnce(args, outputFile, cwd, limits = {}) {
+  const totalMs = limits.totalMs ?? Number(process.env.KIMI_DISPATCH_TIMEOUT_MS || 30 * 60 * 1000);
+  const idleMs = limits.idleMs ?? Number(process.env.KIMI_IDLE_TIMEOUT_MS || 5 * 60 * 1000);
+
   return new Promise((resolve) => {
     const out = createWriteStream(outputFile);
     const child = spawn('kimi', args, {
@@ -94,18 +102,51 @@ function runOnce(args, outputFile, cwd) {
     });
     child.stdout.pipe(out);
 
+    // Timer handles declared before finish() so a SYNCHRONOUS spawn error
+    // (e.g. ENOENT — kimi binary missing) can't hit a temporal-dead-zone
+    // ReferenceError when finish() clears them.
+    let settled = false;
+    let lastOutput = Date.now();
+    let hardTimer = null;
+    let idleTimer = null;
+    let killTimer = null;
+
+    const finish = (code) => {
+      if (settled) return;
+      settled = true;
+      if (hardTimer) clearTimeout(hardTimer);
+      if (idleTimer) clearInterval(idleTimer);
+      if (killTimer) clearTimeout(killTimer);
+      out.end();
+      resolve(code);
+    };
+
+    // SIGTERM, then SIGKILL after 2s. killTimer is tracked so finish() clears
+    // it — no orphaned timer keeping the event loop alive after resolve.
+    const kill = () => {
+      try { child.kill('SIGTERM'); } catch { /* already gone */ }
+      killTimer = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* already gone */ } }, 2000);
+      killTimer.unref?.();
+    };
+
+    hardTimer = setTimeout(() => { kill(); finish(TIMEOUT_EXIT_CODE); }, totalMs);
+
+    // Idle watchdog: kill if no new output for idleMs (a stalled/looping crank).
+    child.stdout.on('data', () => { lastOutput = Date.now(); });
+    idleTimer = setInterval(() => {
+      if (Date.now() - lastOutput > idleMs) { kill(); finish(TIMEOUT_EXIT_CODE); }
+    }, Math.min(idleMs, 30000));
+
     let stderr = '';
-    child.stderr.on('data', (d) => { stderr += d; });
+    child.stderr.on('data', (d) => { stderr += d; lastOutput = Date.now(); });
 
     child.on('close', (code) => {
-      out.end();
       // kimi --print uses exit code 75 for transient errors
-      resolve(code ?? 1);
+      finish(code ?? 1);
     });
 
     child.on('error', () => {
-      out.end();
-      resolve(1);
+      finish(1);
     });
   });
 }
