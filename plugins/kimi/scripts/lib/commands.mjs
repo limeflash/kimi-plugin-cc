@@ -9,6 +9,7 @@ import { discoverContext } from './context.mjs';
 import { parseTelemetry, attachTelemetry } from './telemetry.mjs';
 import { buildGraph, rollupBatch } from './orchestrate.mjs';
 import { codexReview, buildPlanReviewPrompt, buildDiffReviewPrompt } from './codex-bridge.mjs';
+import { commitWork } from './commit.mjs';
 import { warn, readWarnings } from './warn.mjs';
 import { discoverLibraryDocs } from './docs.mjs';
 import { extractResearchTopics, researchTopics } from './research.mjs';
@@ -235,7 +236,7 @@ async function runDispatch(opts) {
       await updateMeta(sessionId, { prompt: finalPrompt });
       const result = await startBackground({
         sessionId, agentFile, prompt: finalPrompt, model, mode,
-        autoCommitPolicy, tag, touchesPaths, baselineSha,
+        autoCommitPolicy, tag, touchesPaths, baselineSha, repoPath,
       });
       return { ...result, exitCode: 0 };
     }
@@ -243,7 +244,7 @@ async function runDispatch(opts) {
     // Foreground: merge the assembled prompt into the already-written meta
     await updateMeta(sessionId, { prompt: finalPrompt });
 
-    const result = await invokeKimi({ prompt: finalPrompt, agentFile, model, sessionId, background: false });
+    const result = await invokeKimi({ prompt: finalPrompt, agentFile, model, sessionId, background: false, cwd: repoPath });
 
     // Capture diff immediately after Kimi returns
     const postDiff = await getWorkingDiff(repoPath);
@@ -262,7 +263,7 @@ async function runDispatch(opts) {
               api_validation_concerns: validation.concerns, committed: false,
             });
             await writeRepoSession(repoPath, sessionId);
-            return { ...result, api_validation: validation.concerns, committed: false, exitCode: 0 };
+            return { ...result, status: 'paused', reason: 'api-validation', api_validation: validation.concerns, committed: false, exitCode: 4 };
           }
         }
       } catch (e) {
@@ -284,7 +285,7 @@ async function runDispatch(opts) {
               diff_review_verdict: review.verdict, committed: false,
             });
             await writeRepoSession(repoPath, sessionId);
-            return { ...result, diff_review: review.verdict, committed: false, exitCode: 0 };
+            return { ...result, status: 'paused', reason: 'diff-review', diff_review: review.verdict, committed: false, exitCode: 4 };
           }
         }
       } catch (e) {
@@ -296,6 +297,16 @@ async function runDispatch(opts) {
       status: result.exitCode === 0 ? 'completed' : 'failed',
       exit_code: result.exitCode, finished_at: new Date().toISOString(),
     });
+
+    // Durably commit Kimi's work per auto_commit_policy. Reaching here means
+    // no review/validation early-return fired, so the diff is clean to commit.
+    try {
+      const m = await readMeta(sessionId);
+      const c = await commitWork(repoPath, sessionId, m, { exitCode: result.exitCode, retries: result.retries ?? 0 });
+      await updateMeta(sessionId, { committed: c.committed, commit_sha: c.commit_sha, commit_reason: c.reason });
+    } catch (e) {
+      await warn('commit', e, 'warning');
+    }
 
     await writeRepoSession(repoPath, sessionId);
 

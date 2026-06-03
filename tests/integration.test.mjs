@@ -12,6 +12,7 @@ import { preflight } from '../plugins/kimi/scripts/lib/preflight.mjs';
 
 test('startBackground end-to-end with mock spawn', async () => {
   const tmpPlugin = makeTempDir();
+  const tmpRepo = makeTempDir();
   const prevEnv = process.env.KIMI_PLUGIN_DATA;
   process.env.KIMI_PLUGIN_DATA = tmpPlugin;
 
@@ -50,6 +51,7 @@ test('startBackground end-to-end with mock spawn', async () => {
       tag: 'test',
       touchesPaths: ['src/test.js'],
       baselineSha: 'abc123',
+      repoPath: tmpRepo,
       spawnFn: fakeSpawn,
     });
 
@@ -67,7 +69,7 @@ test('startBackground end-to-end with mock spawn', async () => {
     assert.equal(meta.baseline_sha, 'abc123');
 
     // Wait for the close handler to fire
-    await new Promise((r) => setTimeout(r, 200));
+    await new Promise((r) => setTimeout(r, 500));
 
     // Verify meta was updated on completion AND all 11 initial fields preserved
     // (regression guard against the writeMeta-overwrite bug closed in v0.3.2)
@@ -86,13 +88,17 @@ test('startBackground end-to-end with mock spawn', async () => {
     assert.equal(meta2.baseline_sha, 'abc123');
     assert.ok(meta2.started_at);
 
-    // Verify telemetry was attached
+    // Verify telemetry was attached. v0.3.3: Kimi emits no usage field, so
+    // tokens are estimated from content length and flagged estimated:true.
     assert.ok(meta2.telemetry);
-    assert.equal(meta2.telemetry.prompt_tokens, 100);
-    assert.equal(meta2.telemetry.completion_tokens, 50);
+    assert.equal(meta2.telemetry.estimated, true);
+    assert.ok(typeof meta2.telemetry.prompt_tokens === 'number');
+    assert.ok(typeof meta2.telemetry.completion_tokens === 'number');
+    assert.ok(meta2.telemetry.phases);
   } finally {
     process.env.KIMI_PLUGIN_DATA = prevEnv;
     cleanupTempDir(tmpPlugin);
+    cleanupTempDir(tmpRepo);
   }
 });
 

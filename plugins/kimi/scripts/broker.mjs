@@ -51,6 +51,14 @@ Commands:
   monitor --task-path <path> [--check]
   warnings [--since <iso>]
   check-update
+
+Exit codes (dispatch):
+  0  ok / dispatched
+  2  origin-diverged   (local branch diverged from origin on touches_paths)
+  3  buggy-evals       (preflight found broken eval bodies — fix the spec)
+  4  review-pause      (plan-review or diff-review returned CONCERN/REVISE/REJECT)
+  5  checkpoint-conflict (resume could not re-apply the stashed checkpoint)
+  6  reserved          (timeout/crash — wired in a later release)
 `);
   process.exit(1);
 }
