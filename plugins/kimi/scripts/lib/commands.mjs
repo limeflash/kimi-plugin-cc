@@ -311,7 +311,8 @@ async function runDispatch(opts) {
 
     await updateMeta(sessionId, {
       status: result.exitCode === 0 ? 'completed' : 'failed',
-      exit_code: result.exitCode, finished_at: new Date().toISOString(),
+      exit_code: result.exitCode, kimi_session_id: result.kimiSessionId || '',
+      finished_at: new Date().toISOString(),
     });
 
     // Durably commit Kimi's work per auto_commit_policy. Reaching here means

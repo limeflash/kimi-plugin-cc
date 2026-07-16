@@ -3,13 +3,13 @@ agent:
   name: kimi-explore
   extend: default
   system_prompt_path: ./explore-system.md
-  # Allow-list (fail-CLOSED), not exclude_tools (fail-open). Used by the
-  # read-only commands /kimi:explore, /kimi:review, /kimi:challenge, which run
-  # under `--yolo` in the user's repo — the ONLY thing keeping them read-only
-  # is this tool set. A deny-list would silently grant any NEW tool Kimi adds
-  # in a future version (e.g. a new patch/move/delete or MCP write tool), so we
-  # grant ONLY read tools here. No WriteFile/StrReplaceFile/Shell/Agent, and no
-  # web egress (a read-only codebase review shouldn't phone out).
+  # NOTE (v0.4.0, kimi-code port): kimi-code has no --agent-file, so this file
+  # is no longer passed to the CLI. Its PATH is still the broker's policy
+  # selector: any non-coder agent file routes the run through the fail-closed
+  # read-only KIMI_CODE_HOME built by scripts/lib/kimi-home.mjs (deny rule
+  # `!{Read,Grep,Glob,ReadMediaFile}` — the kimi-code equivalent of this
+  # allow-list). The legacy kimi-cli semantics below are kept for reference:
+  # allow-list (fail-CLOSED), read tools only, no write/shell/agent/web egress.
   tools:
     - "kimi_cli.tools.file:ReadFile"
     - "kimi_cli.tools.file:ReadMediaFile"

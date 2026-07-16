@@ -15,7 +15,7 @@ trap cleanup EXIT
 cd "$TMP_WORKDIR"
 git init -q
 
-echo "=== kimi-plugin-cc smoke test (v0.2.0) ==="
+echo "=== kimi-plugin-cc smoke test ==="
 echo "Working in: $TMP_WORKDIR"
 
 # --- Test 1: broker dispatch foreground with explore agent (read-only) ---
@@ -147,5 +147,5 @@ done
 
 echo ""
 echo "==================================="
-echo "Plugin smoke test PASSED (v0.2.0)"
+echo "Plugin smoke test PASSED"
 echo "==================================="

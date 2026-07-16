@@ -14,7 +14,11 @@ test('startBackground end-to-end with mock spawn', async () => {
   const tmpPlugin = makeTempDir();
   const tmpRepo = makeTempDir();
   const prevEnv = process.env.KIMI_PLUGIN_DATA;
+  const prevBin = process.env.KIMI_BIN;
   process.env.KIMI_PLUGIN_DATA = tmpPlugin;
+  // Pin binary resolution: without this, resolveKimiBin falls back to a real
+  // ~/.kimi-code/bin/kimi on dev machines and the assertion below drifts.
+  process.env.KIMI_BIN = 'kimi';
 
   try {
     const fakeSpawn = (cmd, args, opts) => {
@@ -97,6 +101,8 @@ test('startBackground end-to-end with mock spawn', async () => {
     assert.ok(meta2.telemetry.phases);
   } finally {
     process.env.KIMI_PLUGIN_DATA = prevEnv;
+    if (prevBin === undefined) delete process.env.KIMI_BIN;
+    else process.env.KIMI_BIN = prevBin;
     cleanupTempDir(tmpPlugin);
     cleanupTempDir(tmpRepo);
   }

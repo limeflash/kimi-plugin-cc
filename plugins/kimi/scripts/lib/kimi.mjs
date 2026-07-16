@@ -4,9 +4,18 @@ import { mkdir, writeFile, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { scanTextForSecrets } from './secrets.mjs';
+import {
+  isReadOnlyAgentFile,
+  prepareReadOnlyHome,
+  resolveKimiBin,
+  buildKimiArgs,
+  buildKimiSpawnEnv,
+} from './kimi-home.mjs';
 
 /**
- * Wrap the local `kimi` CLI with retry logic and JSONL capture.
+ * Wrap the local `kimi` CLI (kimi-code, the TypeScript rewrite, >= 0.26.0)
+ * with watchdogs and JSONL capture. See kimi-home.mjs for the invocation
+ * contract and the read-only enforcement model.
  */
 
 function getPluginRoot() {
@@ -16,17 +25,23 @@ function getPluginRoot() {
 }
 
 /**
- * Invoke kimi --print with structured output capture.
+ * Invoke kimi-code non-interactively (`kimi -p`) with structured output capture.
+ *
+ * The legacy agent-file path doubles as the policy selector: coder*.yaml runs
+ * with full tool access under the user's real KIMI_CODE_HOME; every other
+ * agent file (explore, plan, unknown) runs read-only under the ephemeral home
+ * with the fail-closed deny rule (see kimi-home.mjs).
  *
  * @param {object} opts
  * @param {string} opts.prompt
- * @param {string} opts.agentFile - absolute path to agent YAML
- * @param {string} [opts.model]
- * @param {string} [opts.sessionId]
+ * @param {string} opts.agentFile - legacy agent YAML path, used as the policy selector
+ * @param {string} [opts.model] - kimi-code model alias (config.toml `models` key)
+ * @param {string} [opts.sessionId] - plugin session id (NOT the kimi-code session id)
+ * @param {string} [opts.kimiSessionId] - kimi-code session id to resume with -S
  * @param {boolean} [opts.background=false]
  * @param {string} [opts.cwd] - working directory for the kimi process (e.g. an isolated worktree). Defaults to process.cwd().
  * @param {string} [opts.outputFile] - where to write JSONL (defaults to session dir)
- * @returns {Promise<{sessionId: string, exitCode: number, retries: number, outputFile: string, finalMessage?: string}>}
+ * @returns {Promise<{sessionId: string, exitCode: number, retries: number, outputFile: string, finalMessage?: string, kimiSessionId?: string}>}
  */
 export async function invokeKimi(opts) {
   // Refuse to ship a prompt carrying a credential to the provider (Moonshot/
@@ -46,17 +61,16 @@ export async function invokeKimi(opts) {
   const cwd = opts.cwd || process.cwd();
   const outputFile = opts.outputFile || path.join(sessDir, 'output.jsonl');
 
-  const args = [
-    '--print',
-    '--yolo',
-    '--work-dir', cwd,
-    '--output-format', 'stream-json',
-    '--agent-file', opts.agentFile,
-  ];
-  if (opts.model) {
-    args.push('--model', opts.model);
-  }
-  args.push('-p', opts.prompt);
+  const readOnly = isReadOnlyAgentFile(opts.agentFile);
+  const roHome = readOnly ? await prepareReadOnlyHome(getPluginRoot()) : null;
+  const args = buildKimiArgs({
+    prompt: opts.prompt,
+    model: opts.model,
+    kimiSessionId: opts.kimiSessionId,
+    emptySkillsDir: roHome?.emptySkillsDir,
+  });
+  const env = buildKimiSpawnEnv({ readOnlyHome: roHome?.homeDir });
+  const kimiBin = resolveKimiBin();
 
   if (opts.background) {
     // Background: detach, write PID, return immediately
@@ -64,8 +78,9 @@ export async function invokeKimi(opts) {
     const out = createWriteStream(outputFile);
     const err = createWriteStream(logFile);
 
-    const child = spawn('kimi', args, {
+    const child = spawn(kimiBin, args, {
       cwd,
+      env,
       detached: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -80,35 +95,30 @@ export async function invokeKimi(opts) {
     return { sessionId, exitCode: null, retries: 0, outputFile, status: 'started', pid: child.pid };
   }
 
-  // Foreground: capture with retry on exit 75 (transient). A timeout (124) is
-  // terminal — never retried, since a hung crank should fail fast, not 3x.
-  let exitCode = 0;
-  let retries = 0;
-  const maxRetries = 3;
+  // Foreground: single run under the watchdogs. kimi-code retries transient
+  // provider errors itself (stream-json `meta turn.step.retrying` lines) and
+  // has no legacy exit-75 contract, so the broker no longer respawns; a
+  // timeout (124) stays terminal.
   const limits = { totalMs: opts.totalTimeoutMs, idleMs: opts.idleTimeoutMs };
-
-  while (true) {
-    exitCode = await runOnce(args, outputFile, cwd, limits);
-    if (exitCode !== 75 || retries >= maxRetries) break;
-    retries++;
-    await sleep(retries * 5000);
-  }
+  const exitCode = await runOnce(kimiBin, args, outputFile, { cwd, env }, limits);
 
   const timedOut = exitCode === TIMEOUT_EXIT_CODE;
   const finalMessage = await extractFinalMessage(outputFile);
-  return { sessionId, exitCode, retries, outputFile, finalMessage, timedOut };
+  const kimiSessionId = await extractKimiSessionId(outputFile);
+  return { sessionId, exitCode, retries: 0, outputFile, finalMessage, kimiSessionId, timedOut };
 }
 
 export const TIMEOUT_EXIT_CODE = 124;
 
-function runOnce(args, outputFile, cwd, limits = {}) {
+function runOnce(kimiBin, args, outputFile, spawnOpts = {}, limits = {}) {
   const totalMs = limits.totalMs ?? Number(process.env.KIMI_DISPATCH_TIMEOUT_MS || 30 * 60 * 1000);
   const idleMs = limits.idleMs ?? Number(process.env.KIMI_IDLE_TIMEOUT_MS || 5 * 60 * 1000);
 
   return new Promise((resolve) => {
     const out = createWriteStream(outputFile);
-    const child = spawn('kimi', args, {
-      cwd: cwd || process.cwd(),
+    const child = spawn(kimiBin, args, {
+      cwd: spawnOpts.cwd || process.cwd(),
+      env: spawnOpts.env,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     child.stdout.pipe(out);
@@ -152,7 +162,9 @@ function runOnce(args, outputFile, cwd, limits = {}) {
     child.stderr.on('data', (d) => { stderr += d; lastOutput = Date.now(); });
 
     child.on('close', (code) => {
-      // kimi --print uses exit code 75 for transient errors
+      // kimi-code `-p`: 0 = success, 1 = any error (API/turn/startup),
+      // 129/130/143 = signals. Transient provider retries happen inside the
+      // CLI (meta turn.step.retrying), so any non-zero here is terminal.
       finish(code ?? 1);
     });
 
@@ -164,12 +176,11 @@ function runOnce(args, outputFile, cwd, limits = {}) {
 
 async function extractFinalMessage(outputFile) {
   try {
-    const { readFile } = await import('node:fs/promises');
     const data = await readFile(outputFile, 'utf-8');
     const lines = data.trim().split('\n').filter(Boolean);
     for (let i = lines.length - 1; i >= 0; i--) {
-      const obj = JSON.parse(lines[i]);
-      if (obj.role === 'assistant' && obj.content) {
+      const obj = safeParse(lines[i]);
+      if (obj && obj.role === 'assistant' && obj.content) {
         return obj.content;
       }
     }
@@ -179,8 +190,30 @@ async function extractFinalMessage(outputFile) {
   return '';
 }
 
-function sleep(ms) {
-  return new Promise((r) => setTimeout(r, ms));
+/**
+ * kimi-code prints `{role:'meta', type:'session.resume_hint', session_id}` as
+ * the last stream-json line; capture it so a later run can resume the same
+ * kimi-code session with `-S` (requires the same cwd and the same
+ * KIMI_CODE_HOME the session was created under).
+ */
+export async function extractKimiSessionId(outputFile) {
+  try {
+    const data = await readFile(outputFile, 'utf-8');
+    const lines = data.trim().split('\n').filter(Boolean);
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const obj = safeParse(lines[i]);
+      if (obj && obj.role === 'meta' && obj.type === 'session.resume_hint' && obj.session_id) {
+        return obj.session_id;
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return '';
+}
+
+function safeParse(line) {
+  try { return JSON.parse(line); } catch { return null; }
 }
 
 /**
@@ -248,12 +281,15 @@ export async function watchSession(sessionId, opts = {}) {
         if (obj.tool_calls && Array.isArray(obj.tool_calls)) {
           for (const tc of obj.tool_calls) {
             const name = tc.name || tc.function?.name || '';
-            const args = tc.arguments || tc.args || {};
+            // kimi-code stream-json carries arguments as a JSON string inside
+            // `function.arguments`; legacy carried an object. Accept both.
+            let args = tc.arguments || tc.args || tc.function?.arguments || {};
+            if (typeof args === 'string') args = safeParse(args) || {};
             if (name === 'ReadFile' || name === 'Read') {
-              const p = args.path || '';
+              const p = args.path || args.file_path || '';
               emit(`[exploring] reading ${path.basename(p) || p}`);
-            } else if (name === 'WriteFile' || name === 'Edit' || name === 'StrReplaceFile') {
-              const p = args.path || '';
+            } else if (name === 'WriteFile' || name === 'Write' || name === 'Edit' || name === 'StrReplaceFile') {
+              const p = args.path || args.file_path || '';
               emit(`[editing] ${path.basename(p) || p}`);
             } else if (name === 'Shell' || name === 'Bash') {
               const cmd = args.command || args.cmd || '';

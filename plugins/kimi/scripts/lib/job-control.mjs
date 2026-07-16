@@ -8,6 +8,13 @@ import { attachTelemetry } from './telemetry.mjs';
 import { warn } from './warn.mjs';
 import { updateMeta, readMeta } from './state.mjs';
 import { commitWork } from './commit.mjs';
+import {
+  isReadOnlyAgentFile,
+  prepareReadOnlyHome,
+  resolveKimiBin,
+  buildKimiArgs,
+  buildKimiSpawnEnv,
+} from './kimi-home.mjs';
 
 function getPluginRoot() {
   return process.env.KIMI_PLUGIN_DATA
@@ -42,14 +49,17 @@ export async function startBackground(opts) {
   };
   await writeFile(path.join(sessDir, 'meta.json'), JSON.stringify(meta, null, 2));
 
-  const args = [
-    '--print',
-    '--work-dir', repoPath,
-    '--output-format', 'stream-json',
-    '--agent-file', opts.agentFile,
-  ];
-  if (opts.model) args.push('--model', opts.model);
-  args.push('-p', opts.prompt);
+  // kimi-code invocation: the workspace is the spawn cwd, and the tool policy
+  // travels via KIMI_CODE_HOME (fail-closed read-only for non-coder agent
+  // files) instead of the legacy --agent-file flag. See kimi-home.mjs.
+  const readOnly = isReadOnlyAgentFile(opts.agentFile);
+  const roHome = readOnly ? await prepareReadOnlyHome(getPluginRoot()) : null;
+  const args = buildKimiArgs({
+    prompt: opts.prompt,
+    model: opts.model,
+    emptySkillsDir: roHome?.emptySkillsDir,
+  });
+  const env = buildKimiSpawnEnv({ readOnlyHome: roHome?.homeDir });
 
   const outFile = path.join(sessDir, 'output.jsonl');
   const logFile = path.join(sessDir, 'kimi.log');
@@ -57,8 +67,9 @@ export async function startBackground(opts) {
   const err = createWriteStream(logFile);
 
   const spawnFn = opts.spawnFn || spawn;
-  const child = spawnFn('kimi', args, {
+  const child = spawnFn(resolveKimiBin(), args, {
     cwd: repoPath,
+    env,
     detached: true,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -98,9 +109,17 @@ export async function startBackground(opts) {
   // touches_paths, baseline_sha) by reading-then-merging.
   child.on('close', async (code) => {
     try {
+      // Capture kimi-code's own session id (meta session.resume_hint, last
+      // stream-json line) so a later run can resume it with -S.
+      let kimiSessionId = '';
+      try {
+        const { extractKimiSessionId } = await import('./kimi.mjs');
+        kimiSessionId = await extractKimiSessionId(outFile);
+      } catch { /* best-effort */ }
       await updateMeta(sessionId, {
         status: code === 0 ? 'completed' : 'failed',
         exit_code: code ?? 1,
+        kimi_session_id: kimiSessionId,
         finished_at: new Date().toISOString(),
       });
       try {

@@ -18,7 +18,9 @@ test('startBackground spawns kimi with cwd set to the provided repoPath (worktre
   const tmpPlugin = makeTempDir();
   const tmpRepo = makeTempDir();
   const prevEnv = process.env.KIMI_PLUGIN_DATA;
+  const prevBin = process.env.KIMI_BIN;
   process.env.KIMI_PLUGIN_DATA = tmpPlugin;
+  process.env.KIMI_BIN = 'kimi';
 
   let capturedOpts = null;
   let capturedArgs = null;
@@ -37,12 +39,22 @@ test('startBackground spawns kimi with cwd set to the provided repoPath (worktre
       repoPath: tmpRepo,
       spawnFn,
     });
+    // kimi-code has no --work-dir: the workspace IS the spawn cwd
+    // (apps/kimi-code/src/cli/run-prompt.ts: workDir = process.cwd()).
     assert.equal(capturedOpts.cwd, tmpRepo, 'spawn cwd must equal the worktree repoPath');
-    const wIdx = capturedArgs.indexOf('--work-dir');
-    assert.ok(wIdx >= 0, '--work-dir flag must be present');
-    assert.equal(capturedArgs[wIdx + 1], tmpRepo, '--work-dir value must equal repoPath');
+    assert.ok(!capturedArgs.includes('--work-dir'), 'legacy --work-dir flag must be gone');
+    assert.ok(!capturedArgs.includes('--agent-file'), 'legacy --agent-file flag must be gone');
+    assert.ok(!capturedArgs.includes('--yolo'), '-p mode must not pass --yolo (flag conflict in kimi-code)');
+    const pIdx = capturedArgs.indexOf('-p');
+    assert.ok(pIdx >= 0, '-p flag must be present');
+    assert.equal(capturedArgs[pIdx + 1], 'p', '-p value must be the prompt');
+    // Non-coder agent file → read-only: env must point at the ephemeral home.
+    assert.ok(capturedOpts.env.KIMI_CODE_HOME.includes('kimi-home-readonly'),
+      'read-only run must use the ephemeral KIMI_CODE_HOME');
   } finally {
     process.env.KIMI_PLUGIN_DATA = prevEnv;
+    if (prevBin === undefined) delete process.env.KIMI_BIN;
+    else process.env.KIMI_BIN = prevBin;
     cleanupTempDir(tmpPlugin);
     cleanupTempDir(tmpRepo);
   }

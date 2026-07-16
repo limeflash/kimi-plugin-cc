@@ -53,10 +53,12 @@ test('invokeKimi hard-timeout kills a hung kimi and returns timedOut with sentin
 test('invokeKimi survives a synchronous spawn error (missing binary) without TDZ crash', async () => {
   const tmpPlugin = makeTempDir();
   const prevEnv = process.env.KIMI_PLUGIN_DATA;
-  const prevPath = process.env.PATH;
+  const prevBin = process.env.KIMI_BIN;
   process.env.KIMI_PLUGIN_DATA = tmpPlugin;
-  // Empty PATH so 'kimi' is not found → spawn emits 'error' (ENOENT).
-  process.env.PATH = makeTempDir();
+  // Pin the binary to a nonexistent path so spawn emits 'error' (ENOENT).
+  // (An empty PATH is not enough: resolveKimiBin would fall back to a real
+  // ~/.kimi-code/bin/kimi on machines that have kimi-code installed.)
+  process.env.KIMI_BIN = path.join(makeTempDir(), 'kimi-definitely-missing');
 
   try {
     const result = await invokeKimi({
@@ -71,7 +73,8 @@ test('invokeKimi survives a synchronous spawn error (missing binary) without TDZ
     assert.equal(result.timedOut, false);
   } finally {
     process.env.KIMI_PLUGIN_DATA = prevEnv;
-    process.env.PATH = prevPath;
+    if (prevBin === undefined) delete process.env.KIMI_BIN;
+    else process.env.KIMI_BIN = prevBin;
     cleanupTempDir(tmpPlugin);
   }
 });
