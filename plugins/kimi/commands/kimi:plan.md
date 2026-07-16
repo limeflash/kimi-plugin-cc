@@ -23,12 +23,16 @@ allowed-tools: [Bash, Read, Task]
    - Identify extension points, hooks, and existing patterns.
 
 2. **Dispatch to Kimi**
-   - Use `plan` subagent via `coder.yaml` with `plan-sub.yaml`.
+   - Use the read-only `plan-sub.yaml` agent file. It is the broker's policy
+     selector: any non-`coder*.yaml` file routes the run through the fail-closed
+     read-only home (no Shell/Write, snapshot-isolated, never commits) — which is
+     exactly what "pure planning" requires. **Do not use `coder.yaml` here**: it
+     grants full write/shell access and commits, breaking the plan contract.
    - Prompt includes feature description + gathered context.
    ```
    Bash("node plugins/kimi/scripts/broker.mjs dispatch \
      --prompt 'Create an implementation plan for: <feature>. Context: ...' \
-     --agent-file '$(pwd)/plugins/kimi/agent-files/coder.yaml' \
+     --agent-file '$(pwd)/plugins/kimi/agent-files/plan-sub.yaml' \
      --mode plan")
    ```
 

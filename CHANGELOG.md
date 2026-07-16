@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.6.1
+
+> `/kimi:plan` was not read-only. Found in the same end-to-end pass.
+
+### Fixed
+
+- **`/kimi:plan` ran with full write/commit access.** `commands/kimi:plan.md`
+  dispatched with `--agent-file coder.yaml`, which is the broker's full-access
+  policy selector — so a command documented as "No shell, no write tools. Pure
+  planning" actually granted Write/Shell and committed. Pointed it at the
+  read-only `plan-sub.yaml` (any non-`coder*.yaml` file routes through the
+  fail-closed read-only home). Live-verified: a plan run's write was denied, no
+  file landed, HEAD unchanged, the user's dirty tree intact.
+- **Static guard added.** `tests/command-agent-policy.test.mjs` asserts that
+  `/kimi:review`, `/kimi:challenge`, `/kimi:explore`, `/kimi:plan` reference a
+  read-only agent file and `/kimi:crank` references the full-access one — so a
+  future edit can't silently give a read-only command write access. Suite: 108.
+
 ## 0.6.0
 
 > `dispatch --background` now actually backgrounds. Fixes the last defect from
