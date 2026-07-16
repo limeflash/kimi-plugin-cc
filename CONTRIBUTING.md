@@ -112,7 +112,7 @@ claude --plugin-dir /path/to/kimi-plugin-cc/plugins/kimi
    - `package.json`
    - `.claude-plugin/marketplace.json`
    - `plugins/kimi/.claude-plugin/plugin.json`
-   - `plugins/kimi/commands/kimi:setup.md` (if version is mentioned there)
+   - `plugins/kimi/commands/setup.md` (if version is mentioned there)
 2. Add release notes to `CHANGELOG.md`
 3. Run the full test suite: `npm test && npm run smoke`
 4. Commit: `git commit -am "release: vX.Y.Z"`

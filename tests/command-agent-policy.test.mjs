@@ -17,8 +17,10 @@ const commandsDir = path.join(
 // fail-closed read-only. So a read-only command that points at coder.yaml would
 // silently gain write access and commit — the /kimi:plan bug. These are the
 // intended policies:
-const EXPECTED_READONLY = ['kimi:review.md', 'kimi:challenge.md', 'kimi:explore.md', 'kimi:plan.md'];
-const EXPECTED_WRITE = ['kimi:crank.md'];
+// File names are colon-free (Windows can't have ':' in a filename); the
+// /kimi: slash-command namespace comes from the plugin, not the file name.
+const EXPECTED_READONLY = ['review.md', 'challenge.md', 'explore.md', 'plan.md'];
+const EXPECTED_WRITE = ['crank.md'];
 
 function agentFilesIn(mdPath) {
   const text = fs.readFileSync(mdPath, 'utf-8');
