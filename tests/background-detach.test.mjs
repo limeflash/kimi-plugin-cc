@@ -114,13 +114,16 @@ test('detached supervisor finalizes the session after the broker exits', async (
 
   try {
     // Poll for the supervisor to finalize (it runs after the broker exited).
+    // Generous 30s ceiling: the detached supervisor is one more node process
+    // competing with the whole test suite running concurrently, so cold-start +
+    // git can occasionally take several seconds under load.
     let meta;
-    for (let i = 0; i < 40; i++) {
+    for (let i = 0; i < 120; i++) {
       await new Promise((r) => setTimeout(r, 250));
       meta = JSON.parse(fs.readFileSync(path.join(tmpPlugin, 'sessions', sessionId, 'meta.json'), 'utf-8'));
       if (meta.status === 'completed' || meta.status === 'failed') break;
     }
-    assert.equal(meta.status, 'completed', 'supervisor marks the session completed');
+    assert.equal(meta.status, 'completed', `supervisor marks the session completed (got ${meta.status})`);
     assert.equal(meta.exit_code, 0);
     assert.equal(meta.kimi_session_id, 'session_shim', 'supervisor captured the kimi session id');
     assert.equal(meta.committed, true, 'coder job commits its produced work');
