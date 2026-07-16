@@ -167,14 +167,20 @@ async function checkCommandFiles() {
   const entries = await readdir(commandsDir);
   const mdFiles = entries.filter((f) => f.endsWith('.md'));
 
-  // Every command file should have frontmatter with name and description
+  // Every command file needs frontmatter with a description. The command name
+  // is derived from the file name + plugin namespace (/kimi:<file>), so there
+  // is no `name:` field — colons are illegal in Windows file names, so the
+  // files are `review.md` etc., not `kimi:review.md`.
   for (const f of mdFiles) {
     const content = await readFile(path.join(commandsDir, f), 'utf-8');
     if (!content.match(/^---\s*\n/)) {
       throw new Error(`Command file ${f} missing frontmatter`);
     }
-    if (!content.includes('name:')) {
-      throw new Error(`Command file ${f} missing 'name' in frontmatter`);
+    if (!content.includes('description:')) {
+      throw new Error(`Command file ${f} missing 'description' in frontmatter`);
+    }
+    if (f.includes(':')) {
+      throw new Error(`Command file ${f} has a colon in its name (illegal on Windows)`);
     }
   }
 }
