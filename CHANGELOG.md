@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.5.1
+
+> Two bug fixes surfaced by an end-to-end test pass of the installed plugin
+> against real kimi-code 0.26.0.
+
+### Fixed
+
+- **Read-only runs no longer commit the user's working tree (data-safety).**
+  `/kimi:review`, `/kimi:challenge`, `/kimi:explore`, `/kimi:plan` produce no
+  changes of their own, but `runDispatch`/`startBackground` unconditionally
+  called `commitWork` with the default `on-clean` policy, whose `git add -A`
+  swept the user's **pre-existing uncommitted work** into a "kimi session"
+  commit. Reproduced live: an `/kimi:explore` on a dirty repo committed the
+  user's unrelated edits. Fixed by skipping commit entirely for read-only
+  agent files (foreground and background); `meta.commit_reason` records
+  `read-only session: never commits`. Regression test in
+  `tests/readonly-nocommit.test.mjs` (read-only never commits; coder still
+  does).
+- **`result` now honors `KIMI_PLUGIN_DATA`.** `cmdResult` read
+  `~/.kimi-plugin-cc/sessions/<id>` directly instead of `getSessionsDir()`, so
+  it reported `No output captured yet` for a completed session whenever the
+  data dir was overridden — while `status`/`latest-session` (which use
+  `getSessionsDir`) worked, a confusing split. Regression test in
+  `tests/broker.test.mjs`.
+
+### Known issue (not yet fixed)
+
+- **`dispatch --background` blocks the caller until the job finishes.** The
+  broker pipes the detached child's stdout/stderr into in-process write
+  streams, and those pipe handles keep the broker's event loop alive despite
+  `child.unref()` — so `--background` returns only when the job completes
+  (measured: a 3s job returns in ~3.7s, not immediately). This defeats the
+  point of `--background` and serializes `crank-batch` waves. Pre-existing
+  (the pipe+unref pattern predates the kimi-code port); a proper fix needs a
+  detached supervisor process. Tracked for a follow-up.
+
 ## 0.5.0
 
 > Filesystem isolation — the backstop behind the deny-rule gate. Read-only

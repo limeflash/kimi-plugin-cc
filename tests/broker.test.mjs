@@ -103,3 +103,39 @@ test('broker dispatch rejects a swallowed/missing --prompt with invalid-prompt',
     fs.rmSync(tmpPlugin, { recursive: true, force: true });
   }
 });
+
+test('broker result honors KIMI_PLUGIN_DATA (was hardcoded to ~/.kimi-plugin-cc)', async () => {
+  // Regression: cmdResult read ~/.kimi-plugin-cc/sessions/<id> directly instead
+  // of getSessionsDir(), so `result` reported "No output captured yet" for a
+  // completed session whenever KIMI_PLUGIN_DATA was overridden (status and
+  // latest-session, which use getSessionsDir, worked — a confusing split).
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const tmpPlugin = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-plugin-test-'));
+  const sessionId = 'result-path-1';
+  const sessDir = path.join(tmpPlugin, 'sessions', sessionId);
+  fs.mkdirSync(sessDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(sessDir, 'output.jsonl'),
+    [
+      JSON.stringify({ role: 'assistant', tool_calls: [{ type: 'function', id: 't', function: { name: 'Read', arguments: '{}' } }] }),
+      JSON.stringify({ role: 'tool', tool_call_id: 't', content: 'ok' }),
+      JSON.stringify({ role: 'assistant', content: 'THE FINAL ANSWER' }),
+      JSON.stringify({ role: 'meta', type: 'session.resume_hint', session_id: 'session_x' }),
+    ].join('\n') + '\n',
+  );
+
+  const result = await new Promise((resolve) => {
+    execFile('node', [brokerPath, 'result', '--session-id', sessionId], {
+      env: { ...process.env, KIMI_PLUGIN_DATA: tmpPlugin },
+    }, (err, stdout, stderr) => resolve({ stdout, stderr, code: err?.code ?? 0 }));
+  });
+
+  try {
+    assert.equal(result.code, 0, 'must exit 0');
+    assert.match(result.stdout, /THE FINAL ANSWER/, 'must print the last assistant message');
+    assert.doesNotMatch(result.stdout, /No output captured/, 'must not report missing output');
+  } finally {
+    fs.rmSync(tmpPlugin, { recursive: true, force: true });
+  }
+});

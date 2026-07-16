@@ -10,6 +10,7 @@ import { parseTelemetry, attachTelemetry } from './telemetry.mjs';
 import { buildGraph, rollupBatch } from './orchestrate.mjs';
 import { codexReview, buildPlanReviewPrompt, buildDiffReviewPrompt } from './codex-bridge.mjs';
 import { commitWork } from './commit.mjs';
+import { isReadOnlyAgentFile } from './kimi-home.mjs';
 import { warn, readWarnings } from './warn.mjs';
 import { discoverLibraryDocs } from './docs.mjs';
 import { extractResearchTopics, researchTopics } from './research.mjs';
@@ -318,12 +319,22 @@ async function runDispatch(opts) {
 
     // Durably commit Kimi's work per auto_commit_policy. Reaching here means
     // no review/validation early-return fired, so the diff is clean to commit.
-    try {
-      const m = await readMeta(sessionId);
-      const c = await commitWork(repoPath, sessionId, m, { exitCode: result.exitCode, retries: result.retries ?? 0 });
-      await updateMeta(sessionId, { committed: c.committed, commit_sha: c.commit_sha, commit_reason: c.reason });
-    } catch (e) {
-      await warn('commit', e, 'warning');
+    //
+    // Read-only runs (explore/review/challenge/plan) produce NO changes of
+    // their own — they execute in a snapshot outside the repo. commitWork with
+    // the default on-clean policy does `git add -A`, which would sweep up the
+    // user's PRE-EXISTING uncommitted work into a "kimi session" commit. Never
+    // commit for a read-only agent file; the snapshot guarantee owns the tree.
+    if (isReadOnlyAgentFile(agentFile)) {
+      await updateMeta(sessionId, { committed: false, commit_reason: 'read-only session: never commits' });
+    } else {
+      try {
+        const m = await readMeta(sessionId);
+        const c = await commitWork(repoPath, sessionId, m, { exitCode: result.exitCode, retries: result.retries ?? 0 });
+        await updateMeta(sessionId, { committed: c.committed, commit_sha: c.commit_sha, commit_reason: c.reason });
+      } catch (e) {
+        await warn('commit', e, 'warning');
+      }
     }
 
     await writeRepoSession(repoPath, sessionId);
@@ -491,7 +502,10 @@ async function cmdResult(opts) {
     return cmdResult({ ...opts, session_id: latest });
   }
 
-  const sessDir = path.join(process.env.HOME, '.kimi-plugin-cc', 'sessions', sessionId);
+  // Honor KIMI_PLUGIN_DATA — getSessionsDir() is the single source of truth for
+  // the session store (was hardcoded to ~/.kimi-plugin-cc, so `result` broke
+  // under any KIMI_PLUGIN_DATA override while status/latest-session worked).
+  const sessDir = path.join(getSessionsDir(), sessionId);
   const outputFile = path.join(sessDir, 'output.jsonl');
 
   if (raw) {

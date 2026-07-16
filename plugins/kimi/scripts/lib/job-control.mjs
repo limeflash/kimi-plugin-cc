@@ -136,12 +136,19 @@ export async function startBackground(opts) {
         kimi_session_id: kimiSessionId,
         finished_at: new Date().toISOString(),
       });
-      try {
-        const m = await readMeta(sessionId);
-        const c = await commitWork(repoPath, sessionId, m, { exitCode: code ?? 1, retries: 0 });
-        await updateMeta(sessionId, { committed: c.committed, commit_sha: c.commit_sha, commit_reason: c.reason });
-      } catch (e) {
-        await warn('commit', e, 'warning');
+      // Read-only runs produce no changes of their own (they ran in a snapshot
+      // outside the repo); committing here would sweep the user's pre-existing
+      // uncommitted work into a "kimi session" commit via `git add -A`. Never.
+      if (readOnly) {
+        await updateMeta(sessionId, { committed: false, commit_reason: 'read-only session: never commits' });
+      } else {
+        try {
+          const m = await readMeta(sessionId);
+          const c = await commitWork(repoPath, sessionId, m, { exitCode: code ?? 1, retries: 0 });
+          await updateMeta(sessionId, { committed: c.committed, commit_sha: c.commit_sha, commit_reason: c.reason });
+        } catch (e) {
+          await warn('commit', e, 'warning');
+        }
       }
       await attachTelemetry(sessionId, getSessionsDir());
       if (!process.env.KIMI_KEEP_SNAPSHOT) await cleanupSnapshot(snapshot?.workspaceDir);
