@@ -13,10 +13,10 @@ This guide will get you from zero to your first Kimi delegation inside Claude Co
 
 ```bash
 # Add the marketplace
-/plugin marketplace add luanmorenommaciel/kimi-plugin-cc
+/plugin marketplace add limeflash/kimi-plugin-cc
 
 # Install the plugin
-/plugin install kimi@luanmorenommaciel-kimi
+/plugin install kimi@limeflash-kimi
 
 # Reload
 /reload-plugins

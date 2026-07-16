@@ -13,7 +13,7 @@ Thank you for your interest in contributing! This document covers how to set up 
 ### Clone and Install
 
 ```bash
-git clone https://github.com/luanmorenommaciel/kimi-plugin-cc.git
+git clone https://github.com/limeflash/kimi-plugin-cc.git
 cd kimi-plugin-cc
 npm install
 ```

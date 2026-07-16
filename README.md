@@ -32,13 +32,13 @@ This plugin is for Claude Code users who want an easy way to start using Kimi fr
 Add the marketplace in Claude Code:
 
 ```bash
-/plugin marketplace add luanmorenommaciel/kimi-plugin-cc
+/plugin marketplace add limeflash/kimi-plugin-cc
 ```
 
 Install the plugin:
 
 ```bash
-/plugin install kimi@luanmorenommaciel-kimi
+/plugin install kimi@limeflash-kimi
 ```
 
 Reload plugins:
@@ -189,7 +189,7 @@ Examples:
 ```bash
 /kimi:crank tasks/T-20260521-xref-descriptions-merge-pipeline.md
 /kimi:crank --resume apply the top fix from the last run
-/kimi:crank --model kimi-k1-5 --background implement the bronze layer parser
+/kimi:crank --model kimi-code/kimi-for-coding-highspeed --background implement the bronze layer parser
 /kimi:crank --fresh investigate why the tests started failing
 ```
 

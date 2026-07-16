@@ -1,8 +1,8 @@
 {
-  "name": "luanmorenommaciel-kimi",
+  "name": "limeflash-kimi",
   "owner": {
-    "name": "Luan Moreno",
-    "email": "luan.moreno@owshq.com"
+    "name": "limeflash",
+    "email": "ennanoff@gmail.com"
   },
   "metadata": {
     "description": "Kimi plugin for Claude Code — code review, exploration, and task delegation with 16 broker commands and MCP integrations.",
