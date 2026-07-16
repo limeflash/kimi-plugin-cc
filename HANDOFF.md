@@ -65,22 +65,36 @@ is preferred; use this only if the allow-list proves unsupported.)
 
 ---
 
-## 4. ⚠️ Binary mismatch (why the dogfood couldn't run on Windows)
+## 4. ⚠️ Which `kimi` — legacy `kimi-cli` vs `kimi-code` (VERIFIED)
 
-- The plugin targets **legacy `kimi-cli` v1.44.0+**, which has `--print`,
-  `--work-dir`, `--agent-file` (see `plugins/kimi/scripts/lib/kimi.mjs` `invokeKimi`).
-- The Windows box here has **`kimi-code` 0.26.0** (`~/.kimi-code/bin/kimi.exe`), a
-  different successor CLI. Its `--help` shows `-p/--prompt`, `--add-dir`,
-  `--output-format`, `-y/--yolo` — but **no `--print`, no `--work-dir`, and no
-  `--agent-file`**. It even has a `migrate` command "from a legacy kimi-cli
-  installation."
-- So my `--agent-file`/`--work-dir`/`--print` invocation was invalid for the
-  installed binary → it hung / did nothing. **Not a plugin bug — wrong binary.**
+Two **different** Moonshot products:
 
-**On the Mac, install/use the kimi-cli the plugin actually targets** (v1.44.0+,
-the one with `--agent-file`). If you only have kimi-code, the plugin's whole
-read-only mechanism (agent-file tool restriction) may not apply — worth checking
-whether kimi-code supports agent files at all before running the plugin against it.
+- **`kimi-cli` (legacy)** — the original **Python** CLI (`pip`,
+  `~/.kimi/config.toml`), **frozen at v1.44.0 (2026-05-13), now deprecated / no
+  longer maintained.** It has `--agent-file` (YAML agents), `--print`,
+  `--work-dir`. **The plugin is written for THIS** (see `invokeKimi` flags +
+  README "Kimi CLI v1.44.0+"). Repo: `github.com/MoonshotAI/kimi-cli`.
+- **`kimi-code` (current)** — the **TypeScript/Node** rewrite (`npm`,
+  `~/.kimi-code/config.toml`), actively maintained, multi-provider, sub-agents,
+  plugins. **This is what's installed here (0.26.0) and the one to run today.**
+  Different flags: `-p/--prompt`, `--add-dir`, **no `--agent-file`**. Repo:
+  `github.com/MoonshotAI/kimi-code`. (It even ships `kimi migrate` "from a legacy
+  kimi-cli installation.")
+
+**Consequence: the plugin targets the DEPRECATED CLI.** My dogfood hung because I
+invoked kimi-code with kimi-cli flags (`--agent-file`/`--work-dir`/`--print`) it
+doesn't have — not a plugin bug, wrong binary.
+
+Two ways forward on the Mac:
+1. **Test as-is**: install legacy `kimi-cli` (`pip install kimi-cli`, Python 3.13
+   + uv) and run §2 against it. Confirms the hardening, but on a dying CLI.
+2. **Better long-term — port the plugin to kimi-code** (recommended): swap the
+   invocation in `plugins/kimi/scripts/lib/kimi.mjs` to kimi-code's flags
+   (`-p`, `--add-dir`, `--output-format stream-json`) and re-implement the
+   read-only tool restriction with **kimi-code's own agent/permission system**
+   (it has sub-agents + a permission config — there is no `--agent-file`).
+   Larger change; scope it separately. Until then the `explore.yaml` allow-list
+   only matters for the legacy CLI.
 
 ---
 
