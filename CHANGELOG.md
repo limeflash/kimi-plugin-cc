@@ -1,5 +1,56 @@
 # Changelog
 
+## 0.4.0
+
+> Port from the deprecated Python `kimi-cli` to **kimi-code** (the actively
+> maintained TypeScript CLI, >= 0.26.0), with the read-only hardening
+> re-implemented on kimi-code's own permission engine and verified live.
+
+### Changed (breaking: requires kimi-code >= 0.26.0)
+
+- **Invocation ported to kimi-code.** `kimi -p <prompt> --output-format stream-json`
+  with the repo as the process cwd. The legacy flags `--print`, `--yolo`,
+  `--work-dir`, `--agent-file` are gone (`-p` even rejects `--yolo/--auto/--plan`
+  at startup). Binary resolution: `KIMI_BIN` env → `kimi` on PATH →
+  `~/.kimi-code/bin/kimi` (the installer does not add it to PATH).
+- **Exit-75 retry loop removed.** kimi-code retries transient provider errors
+  internally and reports them as `{"role":"meta","type":"turn.step.retrying"}`
+  stream-json lines; any non-zero exit is terminal. The wall-clock + idle
+  watchdogs remain — kimi-code `-p` has **no** built-in timeout at all.
+- Agent YAML files under `agent-files/` are no longer passed to the CLI; their
+  *path* remains the broker's policy selector (see below).
+
+### Added
+
+- **`lib/kimi-home.mjs` — fail-closed read-only enforcement for kimi-code.**
+  In `-p` mode kimi-code forces `auto` permission and auto-approves asks, so
+  the only hard gate is a user-configured `deny` rule (evaluated before
+  auto/yolo approval; deny beats allow). Read-only commands run under an
+  **ephemeral `KIMI_CODE_HOME`** (`~/.kimi-plugin-cc/kimi-home-readonly/`):
+  user config + `[[permission.rules]] decision="deny"
+  pattern="!{Read,Grep,Glob,ReadMediaFile}"`, credentials **symlinked** (OAuth
+  refresh keeps working), empty `--skills-dir`, telemetry/auto-update off.
+  The user's global `mcp.json` and hooks never load into read-only runs, and
+  MCP/plugin/future tools are all denied by the same rule.
+  - ⚠️ The pattern MUST be brace negation: kimi-code's permission DSL splits
+    on the first `(`, so extglob `!(a|b)` silently matches nothing
+    (fail-open). Verified empirically against picomatch 2.3.2 through the
+    exact parse+match pipeline; guarded by tests.
+  - Policy selection is fail-closed: only `coder*.yaml` gets full access under
+    the real home; explore/plan/unknown agent files all run read-only.
+- **kimi-code session id capture.** The trailing `session.resume_hint` meta
+  line is parsed into `meta.json` as `kimi_session_id` for future `-S` resume.
+- `tests/kimi-home.test.mjs` (11 tests): allow-set lint, no-parens pattern
+  guard, fail-closed selector, ephemeral-home generation (idempotent deny
+  block, credentials symlink, missing-config path), argv/env builders,
+  `KIMI_BIN` resolution. Suite: 89/89.
+
+### Verified live (macOS, kimi-code 0.26.0)
+
+- `kimi doctor config` accepts the generated ephemeral config.
+- PROVE.txt probe: `Write` denied by the rule, file not created; counter-probe
+  confirmed `Read` still works. See SECURITY.md and HANDOFF.md.
+
 ## 0.3.4
 
 > The reliability layer that takes the plugin from 9.4 → 10/10. Closes the last

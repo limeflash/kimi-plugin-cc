@@ -6,8 +6,8 @@ This guide will get you from zero to your first Kimi delegation inside Claude Co
 
 1. **Claude Code** — installed and running
 2. **Node.js 18.18+** — the broker is a Node.js app
-3. **Kimi CLI** — install with `pip install kimi-cli` or `uv tool install kimi-cli`
-4. **Kimi account** — sign up at [kimi.ai](https://kimi.ai) and run `kimi login`
+3. **kimi-code CLI** (>= 0.26.0) — install with `curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash` or `npm install -g @moonshot-ai/kimi-code`
+4. **Kimi account** — run `kimi login` (device-code OAuth flow)
 
 ## Install the Plugin
 

@@ -15,9 +15,13 @@ This plugin is for Claude Code users who want an easy way to start using Kimi fr
 
 ## Requirements
 
-- **Kimi CLI v1.44.0 or later.**
-  - Install with: `pip install kimi-cli` or `uv tool install kimi-cli`
-  - Verify with: `kimi --version`
+- **kimi-code v0.26.0 or later** (the actively maintained TypeScript CLI; the
+  deprecated Python `kimi-cli` is no longer supported).
+  - Install with: `curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash`
+    (macOS/Linux) or `npm install -g @moonshot-ai/kimi-code`
+  - Verify with: `kimi --version` (the installer puts the binary at
+    `~/.kimi-code/bin/kimi`; the plugin finds it there even if it is not on
+    your PATH — override with `KIMI_BIN` if needed)
 - **Node.js 18.18 or later**
   - The broker that dispatches commands to Kimi is a Node.js application.
 - **A Kimi account with API access.**
@@ -177,7 +181,8 @@ Use it when you want Kimi to:
 
 It supports `--background`, `--wait`, `--resume`, and `--fresh`. If you omit `--resume` and `--fresh`, the plugin can offer to continue the latest task thread for this repo.
 
-It also supports `--model <model>` to choose a specific Kimi model (e.g. `kimi-k2`, `kimi-k1-5`).
+It also supports `--model <model>` to choose a specific model alias from your
+kimi-code `config.toml` (e.g. `kimi-code/k3`, `kimi-code/kimi-for-coding`).
 
 Examples:
 
@@ -322,20 +327,28 @@ Then check in with:
 
 ## Kimi Integration
 
-The Kimi plugin wraps the [Kimi CLI](https://github.com/MoonshotAI/Kimi-Chat). It uses the global `kimi` binary installed in your environment and applies the same configuration.
+The Kimi plugin wraps [kimi-code](https://github.com/MoonshotAI/kimi-code). It
+uses your installed `kimi` binary (PATH or `~/.kimi-code/bin/kimi`; override
+with `KIMI_BIN`) and applies the same configuration.
 
 ### Common Configurations
 
-If you want to change the default model that gets used by the plugin, you can define that inside your user-level or project-level `config.toml`. For example to always use `kimi-k2` for a specific project you can add the following to a `.kimi/config.toml` file at the root of the directory you started Claude in:
+If you want to change the default model that gets used by the plugin, set
+`default_model` in your kimi-code `config.toml`:
 
 ```toml
-model = "kimi-k2"
+# ~/.kimi-code/config.toml
+default_model = "kimi-code/k3"
 ```
 
 Your configuration will be picked up based on:
 
-- user-level config in `~/.kimi/config.toml`
-- project-level overrides in `.kimi/config.toml`
+- user-level config in `~/.kimi-code/config.toml` (or `$KIMI_CODE_HOME/config.toml`)
+- project-level workspace settings in `.kimi-code/local.toml`
+
+Read-only commands (`/kimi:review`, `/kimi:challenge`, `/kimi:explore`) run
+under an ephemeral copy of that config with a fail-closed deny rule appended —
+see [SECURITY.md](SECURITY.md).
 
 ### Reliability & timeouts
 

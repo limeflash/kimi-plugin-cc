@@ -29,7 +29,8 @@ The plugin is a Node.js application with a central broker that:
 | File | Purpose |
 |------|---------|
 | `plugins/kimi/scripts/broker.mjs` | Central entry point, argument parsing, dispatch |
-| `plugins/kimi/scripts/lib/kimi.mjs` | Wraps `kimi` CLI with retry logic and JSONL capture |
+| `plugins/kimi/scripts/lib/kimi.mjs` | Wraps the `kimi` CLI (kimi-code) with watchdogs and JSONL capture |
+| `plugins/kimi/scripts/lib/kimi-home.mjs` | Invocation policy: binary resolution, read-only enforcement, ephemeral `KIMI_CODE_HOME` |
 | `plugins/kimi/scripts/lib/state.mjs` | Session metadata persistence |
 | `plugins/kimi/scripts/lib/git.mjs` | Diff capture and git operations |
 | `plugins/kimi/scripts/lib/workspace.mjs` | Repo root detection, session tracking per repo |
@@ -38,13 +39,20 @@ The plugin is a Node.js application with a central broker that:
 
 ## Agent Security Model
 
-Three agent configurations with different tool access:
+The plugin targets **kimi-code** (TypeScript CLI, >= 0.26.0), which has no
+`--agent-file`. The legacy agent-file *path* is kept as the policy selector the
+slash commands pass to the broker; `kimi-home.mjs` maps it to a policy:
 
-| Agent | Tools | Use Case |
-|-------|-------|----------|
-| `coder.yaml` | Full access (WriteFile, Shell, Agent) | Task execution (`/kimi:crank`) |
-| `explore.yaml` | Read-only (no WriteFile, Shell, Agent) | Reviews and exploration |
-| `plan-sub.yaml` | No shell, no write | Structured planning |
+| Agent file | Policy | Use Case |
+|-----------|--------|----------|
+| `coder.yaml` / `coder-sub.yaml` | Full access under the user's real `KIMI_CODE_HOME` | Task execution (`/kimi:crank`) |
+| anything else (`explore.yaml`, `plan-sub.yaml`, unknown) | **Read-only, fail-closed** | Reviews, exploration, planning |
+
+Read-only runs use an ephemeral `KIMI_CODE_HOME` (user config + one deny rule
+`pattern = "!{Read,Grep,Glob,ReadMediaFile}"`, credentials symlinked, empty
+`--skills-dir`). Deny rules are the only hard gate in `-p` mode — see
+SECURITY.md. NEVER use extglob `!(...)` in a permission pattern: the DSL splits
+on the first `(` and the rule silently matches nothing (fail-open).
 
 ## Session Model
 
@@ -55,8 +63,8 @@ Three agent configurations with different tool access:
 
 ## Configuration
 
-- User-level: `~/.kimi/config.toml`
-- Project-level: `.kimi/config.toml`
+- kimi-code user config: `~/.kimi-code/config.toml` (or `$KIMI_CODE_HOME/config.toml`)
+- Read-only runs: ephemeral home at `~/.kimi-plugin-cc/kimi-home-readonly/`, regenerated from the user config on every spawn
 - Plugin data: `~/.kimi-plugin-cc/` (or `KIMI_PLUGIN_DATA` env var)
 
 ### Runtime env contract
@@ -64,10 +72,13 @@ Three agent configurations with different tool access:
 | Env var | Default | Effect |
 |---------|---------|--------|
 | `KIMI_PLUGIN_DATA` | `~/.kimi-plugin-cc/` | Root dir for session state |
+| `KIMI_BIN` | `kimi` on PATH, else `~/.kimi-code/bin/kimi` | kimi-code binary override |
+| `KIMI_CODE_USER_HOME` | `$KIMI_CODE_HOME` or `~/.kimi-code` | Where the user's real config/credentials are read from when building the read-only home |
 | `KIMI_DISPATCH_TIMEOUT_MS` | `1800000` (30m) | Hard wall-clock timeout per crank (`runOnce` foreground). On expiry: SIGTERM, then SIGKILL after 2s. |
 | `KIMI_IDLE_TIMEOUT_MS` | `300000` (5m) | Idle-output watchdog (foreground `runOnce` and detached background spawn). Kills a crank that stops emitting output. |
+| `KIMI_ALLOW_SECRETS` | unset | Set to `1` to override the secret-scan preflight (not recommended) |
 
-A timeout is **terminal** — never retried (only exit-75 transient errors retry, up to 3x). It resolves with the internal sentinel `TIMEOUT_EXIT_CODE` (124) and surfaces to the supervisor as broker exit code **6** with `status: failed`, `reason: timeout`, `committed: false`.
+A timeout is **terminal** and resolves with the internal sentinel `TIMEOUT_EXIT_CODE` (124), surfacing to the supervisor as broker exit code **6** with `status: failed`, `reason: timeout`, `committed: false`. There is no retry loop: kimi-code handles transient provider errors internally (stream-json `meta turn.step.retrying` lines); the legacy exit-75 retry contract is gone. kimi-code `-p` itself has **no** built-in timeout, so these watchdogs are the only bound on a hung run.
 
 ### Broker exit codes (`dispatch`)
 

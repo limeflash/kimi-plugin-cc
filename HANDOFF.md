@@ -1,134 +1,82 @@
-# kimi-plugin-cc hardening — handoff (finish on macOS)
+# kimi-plugin-cc hardening — handoff (RESOLVED 2026-07-17)
 
-Fork: **`limeflash/kimi-plugin-cc`** (fork of `luanmorenommaciel/kimi-plugin-cc`),
-`main` @ `dcfe95f`. Three hardening changes are pushed and live. **One thing is
-unverified** because the Windows box has the wrong `kimi` binary (see §4). Verify
-it on the Mac (~1 min) and it's done — or apply the fallback in §3.
+Fork: **`limeflash/kimi-plugin-cc`** (fork of `luanmorenommaciel/kimi-plugin-cc`).
+This handoff is **closed**: every open item was resolved on macOS, and the
+plugin was **ported from the deprecated Python `kimi-cli` to kimi-code 0.26.0**
+(§4 option 2 — the recommended path) instead of being validated against the
+dying CLI.
 
----
+## Resolution summary
 
-## 1. What shipped (based on antigravity-plugin-cc / agy)
+### §2 (was: does `tools:` replace or merge?) — answered from source, both CLIs
 
-| Commit | Change |
-|---|---|
-| `5a251ea` | **`plugins/kimi/agent-files/explore.yaml`**: `exclude_tools` deny-list → `tools` **allow-list** (fail-closed). Grants only `ReadFile, ReadMediaFile, Glob, Grep`. |
-| `b284167` | **`plugins/kimi/scripts/lib/secrets.mjs`** (new, ported from agy): `scanTextForSecrets` / `scanDiffForSecrets`. |
-| `dcfe95f` | **`plugins/kimi/scripts/lib/kimi.mjs`**: import + scan `opts.prompt` at the top of `invokeKimi`; throw (broker exits 1) if a credential is detected. Override `KIMI_ALLOW_SECRETS=1`. |
-| `cff79ff` | **`tests/secrets.test.mjs`** (new): scanner tests + a static lint that `explore.yaml` stays a `tools:` allow-list with no write/shell grants. **4/4 green** (`node --test tests/secrets.test.mjs`). |
+- **Legacy kimi-cli**: `tools:` REPLACES the base list on `extend`
+  (`agentspec.py` — `base_agent_spec.tools = agent_spec.tools`; only
+  `system_prompt_args` merges). The allow-list commit `5a251ea` was therefore
+  correct, NOT a regression. The §3 fallback was never needed.
+  - Bonus finding: legacy kimi-cli loads **plugin tools and MCP tools on top of
+    any agent-file allow-list** (`soul/agent.py load_agent`), and raw
+    `--mcp-config` does NOT suppress the default global `mcp.json` (only
+    `--mcp-config-file` does). Moot for this plugin after the port, but a real
+    hole for anyone still using agent-files as a security boundary on legacy.
 
-### Why explore.yaml matters
-`/kimi:explore`, `/kimi:review`, `/kimi:challenge` **all share `explore.yaml`** and
-run as `kimi --print --yolo --work-dir <repo> --agent-file explore.yaml`. Under
-`--yolo` everything is auto-approved, so the **only** thing keeping them read-only
-is the agent's tool set. The original `exclude_tools` deny-list is **fail-open**: a
-new write tool added in a future Kimi version isn't excluded → auto-granted. The
-allow-list is fail-closed.
+### §4 (which CLI) — ported to kimi-code (v0.4.0)
 
----
+- Invocation: `cwd=<repo>` + `kimi -p <prompt> --output-format stream-json`
+  (`-p` rejects `--yolo/--auto/--plan`; workspace = process cwd; binary
+  resolved via `KIMI_BIN` → PATH → `~/.kimi-code/bin/kimi`).
+- Exit-75 retry contract removed — kimi-code retries transient provider errors
+  internally (`meta turn.step.retrying`). Watchdogs kept: kimi-code `-p` has NO
+  built-in timeout.
+- kimi-code's own session id is captured from the `session.resume_hint` meta
+  line into `meta.json` (`kimi_session_id`) for future `-S` resume.
 
-## 2. THE open question — verify on Mac (blocks calling read-only "guaranteed")
+### Read-only enforcement (the §2 hardening, re-implemented for kimi-code)
 
-The allow-list is strictly read-only **iff Kimi's `tools:` key REPLACES the default
-toolset (not merges/adds to it).**
+- In `-p` mode permission is forced `auto` and asks are auto-approved
+  (`run-prompt.ts installHeadlessHandlers`) → the ONLY hard gate is a
+  user-configured **deny** permission rule (`UserConfiguredDeny` precedes
+  `AutoModeApprove`; deny beats allow regardless of config order).
+- Fail-closed rule, injected via an **ephemeral `KIMI_CODE_HOME`**
+  (`~/.kimi-plugin-cc/kimi-home-readonly/`: user config copy + deny block,
+  credentials symlinked, empty `--skills-dir`, telemetry/auto-update off):
 
-- Evidence it replaces (not verified live): `coder.yaml` lists a full curated
-  toolset including common defaults (`ReadFile`, `Grep`) — pointless if additive,
-  so `tools:` is authoritative. Standard agent-framework convention.
-- If instead `tools:` **merges**, my change is a REGRESSION (it removed the
-  working `exclude_tools` and added nothing effective). → apply §3.
+  ```toml
+  [[permission.rules]]
+  decision = "deny"
+  pattern = "!{Read,Grep,Glob,ReadMediaFile}"
+  ```
 
-### Verify (~1 min, uses the CORRECT kimi-cli — see §4)
-```sh
-git clone https://github.com/limeflash/kimi-plugin-cc && cd kimi-plugin-cc
-tmp=$(mktemp -d)
-kimi --print --yolo --work-dir "$tmp" --output-format stream-json \
-  --agent-file "$PWD/plugins/kimi/agent-files/explore.yaml" \
-  -p "Create a file named PROVE.txt containing hi in the working directory. If you cannot, say why."
-test -f "$tmp/PROVE.txt" && echo "BAD: tools: merges → apply fallback" || echo "GOOD: allow-list holds"
-```
-- **No `PROVE.txt`** (model reports it has no write tool) → ✅ done.
-- **`PROVE.txt` created** → ❌ apply §3.
+  ⚠️ Brace negation is load-bearing: the permission DSL splits patterns on the
+  first `(`, so extglob `!(a|b)` parses as tool `"!"` + arg pattern and matches
+  NOTHING (silently fail-open). Verified empirically against picomatch 2.3.2
+  through a re-implementation of kimi-code's exact parse+match pipeline
+  (21/21 tool names correct). Guarded by tests.
 
-`kimi doctor` also validates config files — run it on the agent-file if unsure.
+- Policy selector: the agent-file path the slash commands already pass. Only
+  `coder*.yaml` gets full access under the real home; **anything else —
+  including unknown/typoed files — runs read-only** (fail-closed).
 
----
+### Live verification (macOS, kimi-code 0.26.0, real model)
 
-## 3. Fallback (only if §2 shows `tools:` merges)
+- `kimi doctor config` on the generated ephemeral config: **OK**.
+- PROVE.txt probe through the full plugin path (`invokeKimi` + explore.yaml):
+  model attempted `Write` → `Tool "Write" was denied by permission rule.
+  Reason: kimi-plugin-cc read-only session…`; **no file created**; exit 0.
+- Counter-probe: `Read` of README.md in the same configuration **succeeded**
+  (the deny rule does not over-restrict).
 
-Revert `explore.yaml` to `exclude_tools` but make it **complete** — exclude every
-write/mutate/exec tool, not just the three originals. Get the full default tool
-list from the Kimi docs (https://moonshotai.github.io/kimi-code/ or the kimi-cli
-docs for the plugin's target version) and exclude at least: `WriteFile`,
-`StrReplaceFile`, `Shell`, `Agent`, plus any `Create*/Move*/Delete*/Patch/Notebook`
-and MCP-write tools. (Still fail-open on future tools — that's why the allow-list
-is preferred; use this only if the allow-list proves unsupported.)
+### Tests
 
----
+`npm test`: **89/89 green** (was 78) — new `tests/kimi-home.test.mjs` covers the
+allow-set lint (successor of the explore.yaml lint), the no-parens pattern
+guard, fail-closed selector behavior, ephemeral-home generation (no deny-rule
+accumulation, credentials symlink, missing-user-config path), argv/env
+builders, and `KIMI_BIN` resolution.
 
-## 4. ⚠️ Which `kimi` — legacy `kimi-cli` vs `kimi-code` (VERIFIED)
+## Still open (tracked in SECURITY.md, not blockers)
 
-Two **different** Moonshot products:
-
-- **`kimi-cli` (legacy)** — the original **Python** CLI (`pip`,
-  `~/.kimi/config.toml`), **frozen at v1.44.0 (2026-05-13), now deprecated / no
-  longer maintained.** It has `--agent-file` (YAML agents), `--print`,
-  `--work-dir`. **The plugin is written for THIS** (see `invokeKimi` flags +
-  README "Kimi CLI v1.44.0+"). Repo: `github.com/MoonshotAI/kimi-cli`.
-- **`kimi-code` (current)** — the **TypeScript/Node** rewrite (`npm`,
-  `~/.kimi-code/config.toml`), actively maintained, multi-provider, sub-agents,
-  plugins. **This is what's installed here (0.26.0) and the one to run today.**
-  Different flags: `-p/--prompt`, `--add-dir`, **no `--agent-file`**. Repo:
-  `github.com/MoonshotAI/kimi-code`. (It even ships `kimi migrate` "from a legacy
-  kimi-cli installation.")
-
-**Consequence: the plugin targets the DEPRECATED CLI.** My dogfood hung because I
-invoked kimi-code with kimi-cli flags (`--agent-file`/`--work-dir`/`--print`) it
-doesn't have — not a plugin bug, wrong binary.
-
-Two ways forward on the Mac:
-1. **Test as-is**: install legacy `kimi-cli` (`pip install kimi-cli`, Python 3.13
-   + uv) and run §2 against it. Confirms the hardening, but on a dying CLI.
-2. **Better long-term — port the plugin to kimi-code** (recommended): swap the
-   invocation in `plugins/kimi/scripts/lib/kimi.mjs` to kimi-code's flags
-   (`-p`, `--add-dir`, `--output-format stream-json`) and re-implement the
-   read-only tool restriction with **kimi-code's own agent/permission system**
-   (it has sub-agents + a permission config — there is no `--agent-file`).
-   Larger change; scope it separately. Until then the `explore.yaml` allow-list
-   only matters for the legacy CLI.
-
----
-
-## 5. What I deliberately did NOT do (and why)
-
-- **No temp-dir/worktree isolation, no env-strip.** Kimi's `--work-dir` is
-  *intentionally* the repo for read commands — they read the LIVE tree incl.
-  uncommitted changes (`/kimi:review` reviews uncommitted work). A worktree
-  (=HEAD) would break that, and env-strip isolates nothing when the repo path is
-  passed explicitly. Here the correct lever is tool-gating via the agent-file, not
-  filesystem isolation. (This differs from agy, where the CLI executed tools
-  regardless of flags, so isolation was the only lever.)
-- **No CHANGELOG entry / version bump / `NOTICE` update** on the fork — add if you
-  want to publish it as a distinct build.
-
-## 6. Secret-scan notes
-
-- Runs on the prompt WE assemble (review diff + `CLAUDE.md`/`AGENTS.md` context
-  preamble + user text). Files Kimi reads itself via `ReadFile` are **not** scanned
-  (out of our reach). Patterns: AWS, GitHub PAT + fine-grained, Slack, Anthropic
-  `sk-ant`, OpenAI `sk-proj`/`sk-`, Moonshot `sk-`, PEM block, inline `key=…`.
-
-## 7. To finish
-
-1. On Mac with the correct kimi-cli: run §2. Green → done.
-2. Install: `/plugin marketplace add limeflash/kimi-plugin-cc`.
-3. Optional: PR the two fixes upstream to `luanmorenommaciel` — the fail-open
-   deny-list is a real latent issue in the original, and the secret-scan is a
-   genuine add.
-
-## 8. Environment gotchas hit here (smoother on Mac)
-
-- `git clone`/`git push` to GitHub **hung** repeatedly (smart-HTTP negotiation).
-  Worked around with `raw.githubusercontent` GETs + the Contents REST API. Normal
-  git should just work on the Mac.
-- The 4 commits were pushed file-by-file via the REST API, so they're 4 separate
-  commits rather than one — squash if you care.
+- Filesystem isolation backstop (worktree / staged-diff temp dir) — unchanged
+  roadmap item.
+- Optional: PR the legacy findings upstream to `luanmorenommaciel` (fail-open
+  deny-list + secret scan; the kimi-code port itself is a bigger conversation).

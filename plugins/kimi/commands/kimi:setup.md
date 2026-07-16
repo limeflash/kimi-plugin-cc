@@ -1,33 +1,41 @@
 ---
 name: kimi:setup
-description: Verify Kimi CLI install, auth, agent files, MCPs, review gate, and AFK defaults.
+description: Verify kimi-code install, auth, config, MCPs, review gate, and permission defaults.
 argument-hint: [--enable-review-gate] [--disable-review-gate] [--enable-afk-default] [--disable-afk-default]
 allowed-tools: [Bash, Read, Write, Edit]
 ---
 
 # /kimi:setup
 
-> Verify Kimi CLI installation, auth, agent files, MCP config, MCP parity, and configure AFK defaults.
+> Verify kimi-code installation, auth, config, MCP config, MCP parity, and configure defaults.
 
 ## Process
 
 1. **Check binary**
    ```
-   Bash("which kimi && kimi --version")
+   Bash("which kimi || ls ~/.kimi-code/bin/kimi; kimi --version 2>/dev/null || ~/.kimi-code/bin/kimi --version")
    ```
-   - If missing: instruct user to install via `curl -LsSf https://code.kimi.com/install.sh | bash`
+   - Requires kimi-code >= 0.26.0 (the TypeScript CLI). If missing: instruct
+     user to install via `curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash`.
+   - If the legacy Python kimi-cli is found instead (`kimi --version` reports
+     1.x): instruct user to install kimi-code and run `kimi migrate`.
 
-2. **Check auth**
+2. **Check config validity + auth**
    ```
-   Bash("kimi --print -p 'hello' --final-message-only 2>&1 | head -n 5")
+   Bash("kimi doctor")
+   Bash("grep -c 'oauth\\|api_key' ~/.kimi-code/config.toml")
    ```
-   - If auth error, instruct user to run `kimi login`.
+   - If no provider/credentials configured, instruct user to run `kimi login`.
+   - Do NOT run a model prompt just to test auth — `kimi doctor` plus config
+     inspection is enough and costs nothing.
 
 3. **Check MCP config**
    ```
-   Read("~/.kimi/mcp.json")
+   Read("~/.kimi-code/mcp.json")
    ```
-   - Report number of configured MCP servers.
+   - Report number of configured MCP servers (file may not exist — that's fine).
+   - Note: MCP servers never load into the plugin's read-only runs (ephemeral
+     `KIMI_CODE_HOME`), and their tools are denied there by the fail-closed rule.
 
 4. **MCP parity check**
    ```
@@ -36,7 +44,7 @@ allowed-tools: [Bash, Read, Write, Edit]
    - Compare Claude's MCP list with Kimi's.
    - Report mismatches (servers present in one but not the other).
 
-5. **Check plugin agent files**
+5. **Check plugin agent files** (policy selectors for the broker)
    ```
    Read("plugins/kimi/agent-files/coder.yaml")
    Read("plugins/kimi/agent-files/explore.yaml")
@@ -46,30 +54,29 @@ allowed-tools: [Bash, Read, Write, Edit]
    - `--enable-review-gate`: update `plugins/kimi/hooks/hooks.json` to enable the Stop hook.
    - `--disable-review-gate`: disable it.
 
-7. **AFK default toggle** (if flags provided)
-   - `--enable-afk-default`: writes `default_yolo = true` to `~/.kimi/config.toml`.
-   - `--disable-afk-default`: removes or sets `default_yolo = false`.
-   - This makes every Kimi session auto-approved by default — no more HITL prompts.
+7. **Permission default toggle** (if flags provided)
+   - `--enable-afk-default`: writes `default_permission_mode = "yolo"` to `~/.kimi-code/config.toml`.
+   - `--disable-afk-default`: sets `default_permission_mode = "manual"`.
+   - This affects the user's own interactive `kimi` sessions only. Plugin
+     dispatches use `-p`, which always runs under `auto` permission regardless
+     of this setting.
 
-8. **Agent-file auto-scaffold**
-   - If `.claude/agents/` exists and `.kimi/agents/` does not, offer to scaffold Kimi agent files.
-
-9. **Report status**
+8. **Report status**
 
    ```
    | Check         | Status |
    |---------------|--------|
-   | Binary        | PASS   |
+   | Binary        | PASS (kimi-code 0.26.0) |
+   | Config        | PASS (kimi doctor) |
    | Auth          | PASS   |
    | MCPs          | 3      |
    | MCP parity    | 1 mismatch |
    | Agent files   | PASS   |
    | Review gate   | off    |
-   | AFK default   | on     |
+   | AFK default   | manual |
    ```
 
 ## Notes
 
 - Does not mutate user config without explicit flags.
-- `--enable-afk-default` is the recommended setup for plugin users — it eliminates HITL friction.
 - Safe to run at any time.
