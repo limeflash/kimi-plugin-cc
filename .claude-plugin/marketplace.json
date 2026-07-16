@@ -14,8 +14,8 @@
       "description": "Use Kimi from Claude Code to review code, explore codebases, or delegate tasks.",
       "version": "0.5.0",
       "author": {
-        "name": "Luan Moreno",
-        "email": "luan.moreno@owshq.com"
+        "name": "limeflash",
+        "email": "ennanoff@gmail.com"
       },
       "source": "./plugins/kimi",
       "keywords": [
