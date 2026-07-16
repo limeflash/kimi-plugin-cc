@@ -1,5 +1,4 @@
 ---
-name: kimi:update
 description: Check for plugin updates and install the latest version.
 argument-hint: [--check-only]
 allowed-tools: [Bash, Read]

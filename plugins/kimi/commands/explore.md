@@ -1,5 +1,4 @@
 ---
-name: kimi:explore
 description: Deep codebase exploration using Kimi's native explore subagent. Produces Executive Summary, Health Score, and Architecture Deep Dive.
 argument-hint: [--background] [--output html]
 allowed-tools: [Bash, Read, Task]

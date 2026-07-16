@@ -1,5 +1,4 @@
 ---
-name: kimi:status
 description: Check the status of a Kimi session or list all sessions.
 argument-hint: [--session-id <id>]
 allowed-tools: [Bash, Read]

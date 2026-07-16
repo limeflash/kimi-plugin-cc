@@ -1,5 +1,4 @@
 ---
-name: kimi:setup
 description: Verify kimi-code install, auth, config, MCPs, review gate, and permission defaults.
 argument-hint: [--enable-review-gate] [--disable-review-gate] [--enable-afk-default] [--disable-afk-default]
 allowed-tools: [Bash, Read, Write, Edit]

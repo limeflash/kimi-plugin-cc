@@ -1,5 +1,4 @@
 ---
-name: kimi:cancel
 description: Cancel an active background Kimi session.
 argument-hint: [<session-id>]
 allowed-tools: [Bash]

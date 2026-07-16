@@ -1,5 +1,4 @@
 ---
-name: kimi:challenge
 description: Run an adversarial review that questions design decisions, trade-offs, and hidden assumptions. Read-only.
 argument-hint: [--base <ref>] [--background] [focus text]
 allowed-tools: [Bash, Read, Task]

@@ -1,5 +1,4 @@
 ---
-name: kimi:crank
 description: Delegate a task file to Kimi for execution. Write-capable. Supports resume, model override, auto-commit policy, and Codex review hooks.
 argument-hint: <path-to-task-md> [--background] [--model <model>] [--resume] [--fresh] [--auto-commit on|off|on-clean] [--plan-review] [--diff-review] [--force-dispatch] [--skip-preflight] [--no-context]
 allowed-tools: [Bash, Read, Write, Edit, Task]

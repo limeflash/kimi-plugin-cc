@@ -1,5 +1,4 @@
 ---
-name: kimi:review
 description: Run a read-only peer review of uncommitted changes or a branch diff.
 argument-hint: [--base <ref>] [--background]
 allowed-tools: [Bash, Read, Task]

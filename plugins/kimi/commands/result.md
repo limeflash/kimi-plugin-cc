@@ -1,5 +1,4 @@
 ---
-name: kimi:result
 description: Fetch the final output of a completed Kimi session. Supports verbose activity log.
 argument-hint: [<session-id>] [--raw] [--verbose]
 allowed-tools: [Bash]

@@ -1,5 +1,4 @@
 ---
-name: kimi:plan
 description: Generate a structured implementation plan using Kimi's native plan subagent. No shell, no write tools.
 argument-hint: <feature-description> [--output html]
 allowed-tools: [Bash, Read, Task]
