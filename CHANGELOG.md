@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.5.0
+
+> Filesystem isolation — the backstop behind the deny-rule gate. Read-only
+> runs can no longer write into your repo even if the permission engine
+> failed, because they don't run in your repo at all.
+
+### Added
+
+- **`lib/snapshot.mjs` — snapshot workspace for read-only runs.** Before a
+  read-only dispatch, the plugin builds a copy of the repo OUTSIDE the working
+  tree: `git archive HEAD` (committed tree, no `.git`) + `git diff HEAD
+  --binary` overlay (uncommitted staged/unstaged changes) + untracked
+  non-ignored files. kimi's cwd is the snapshot, so `explore`/`review`/
+  `challenge` see the live tree — including uncommitted work a plain HEAD
+  worktree would miss — while writes physically land in a throwaway copy.
+  Extra properties for free: no `.git` (no hooks/push surface) and no
+  gitignored files (`.env` & friends cannot be read). The snapshot is deleted
+  after the run (`KIMI_KEEP_SNAPSHOT=1` keeps it for debugging); background
+  runs clean it in the close handler.
+- **`GIT_*` env strip.** Read-only child processes lose `GIT_DIR`,
+  `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`,
+  `GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_COMMON_DIR`, so nothing inside the
+  snapshot can be redirected back at the real repository.
+- **Isolation observability.** `meta.json` records `isolation:
+  "snapshot" | "in-place" | "none"` and `isolation_warning`. Non-git dirs (or
+  unborn HEAD) degrade to in-place — deny rules only — with a warning instead
+  of failing the command.
+- `tests/snapshot.test.mjs` (7 tests): live-tree fidelity (uncommitted edits,
+  untracked files, deletions), gitignored files absent, writes-don't-escape
+  backstop, non-git/no-commit fallbacks, guarded cleanup, clean regeneration.
+  Suite: 98/98.
+
+### Verified live (macOS, kimi-code 0.26.0)
+
+- Read-only probe in a repo with uncommitted edits: kimi read the
+  UNCOMMITTED contents through the snapshot, its write attempt was denied by
+  the permission rule, the real repo stayed clean (`git status` unchanged),
+  and the snapshot was removed after the run. `meta.isolation = "snapshot"`.
+
 ## 0.4.0
 
 > Port from the deprecated Python `kimi-cli` to **kimi-code** (the actively
