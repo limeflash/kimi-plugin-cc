@@ -76,7 +76,8 @@ builders, and `KIMI_BIN` resolution.
 
 ## Still open (tracked in SECURITY.md, not blockers)
 
-- Filesystem isolation backstop (worktree / staged-diff temp dir) — unchanged
-  roadmap item.
+- ~~Filesystem isolation backstop~~ — **done in v0.5.0** (`lib/snapshot.mjs`:
+  snapshot workspace = `git archive HEAD` + uncommitted diff + untracked
+  files, outside the repo, `GIT_*` env stripped, live-verified).
 - Optional: PR the legacy findings upstream to `luanmorenommaciel` (fail-open
   deny-list + secret scan; the kimi-code port itself is a bigger conversation).
