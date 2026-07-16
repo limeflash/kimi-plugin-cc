@@ -312,6 +312,7 @@ async function runDispatch(opts) {
     await updateMeta(sessionId, {
       status: result.exitCode === 0 ? 'completed' : 'failed',
       exit_code: result.exitCode, kimi_session_id: result.kimiSessionId || '',
+      isolation: result.isolation || 'none', isolation_warning: result.isolationWarning || '',
       finished_at: new Date().toISOString(),
     });
 

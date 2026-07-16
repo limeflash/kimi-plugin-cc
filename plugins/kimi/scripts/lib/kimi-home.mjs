@@ -157,16 +157,30 @@ export function buildKimiArgs(opts) {
   return args;
 }
 
+// Repo-locating git env vars. Stripped from read-only runs so a child git
+// process inside the snapshot workspace can never be redirected back at the
+// real repository (defense in depth — Bash is deny-ruled anyway).
+const GIT_REPO_ENV_VARS = [
+  'GIT_DIR',
+  'GIT_WORK_TREE',
+  'GIT_INDEX_FILE',
+  'GIT_OBJECT_DIRECTORY',
+  'GIT_ALTERNATE_OBJECT_DIRECTORIES',
+  'GIT_COMMON_DIR',
+];
+
 /**
  * Environment for one kimi-code run. Auto-update is always disabled (a crank
  * must not block on an update prompt); read-only runs additionally point
- * KIMI_CODE_HOME at the ephemeral home and disable telemetry.
+ * KIMI_CODE_HOME at the ephemeral home, disable telemetry, and drop
+ * repo-locating GIT_* vars.
  */
 export function buildKimiSpawnEnv(opts = {}) {
   const env = { ...process.env, KIMI_CODE_NO_AUTO_UPDATE: '1' };
   if (opts.readOnlyHome) {
     env.KIMI_CODE_HOME = opts.readOnlyHome;
     env.KIMI_DISABLE_TELEMETRY = '1';
+    for (const key of GIT_REPO_ENV_VARS) delete env[key];
   }
   return env;
 }

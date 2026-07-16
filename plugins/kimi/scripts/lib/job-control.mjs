@@ -15,6 +15,7 @@ import {
   buildKimiArgs,
   buildKimiSpawnEnv,
 } from './kimi-home.mjs';
+import { prepareReadOnlySnapshot, cleanupSnapshot } from './snapshot.mjs';
 
 function getPluginRoot() {
   return process.env.KIMI_PLUGIN_DATA
@@ -61,6 +62,19 @@ export async function startBackground(opts) {
   });
   const env = buildKimiSpawnEnv({ readOnlyHome: roHome?.homeDir });
 
+  // Filesystem isolation (read-only backstop): kimi runs in a snapshot of the
+  // repo outside the working tree; see snapshot.mjs. Skipped for injected
+  // spawnFn (tests) — there is no real process to isolate.
+  let snapshot = null;
+  if (readOnly && !opts.spawnFn) {
+    snapshot = await prepareReadOnlySnapshot(repoPath, sessDir);
+    await updateMeta(sessionId, {
+      isolation: snapshot.workspaceDir ? 'snapshot' : 'in-place',
+      isolation_warning: snapshot.warning || '',
+    });
+  }
+  const effectiveCwd = snapshot?.workspaceDir || repoPath;
+
   const outFile = path.join(sessDir, 'output.jsonl');
   const logFile = path.join(sessDir, 'kimi.log');
   const out = createWriteStream(outFile);
@@ -68,7 +82,7 @@ export async function startBackground(opts) {
 
   const spawnFn = opts.spawnFn || spawn;
   const child = spawnFn(resolveKimiBin(), args, {
-    cwd: repoPath,
+    cwd: effectiveCwd,
     env,
     detached: true,
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -130,6 +144,7 @@ export async function startBackground(opts) {
         await warn('commit', e, 'warning');
       }
       await attachTelemetry(sessionId, getSessionsDir());
+      if (!process.env.KIMI_KEEP_SNAPSHOT) await cleanupSnapshot(snapshot?.workspaceDir);
     } catch (e) {
       await warn('job-control', e, 'error');
     }

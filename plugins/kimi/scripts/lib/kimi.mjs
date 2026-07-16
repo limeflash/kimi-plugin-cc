@@ -11,6 +11,7 @@ import {
   buildKimiArgs,
   buildKimiSpawnEnv,
 } from './kimi-home.mjs';
+import { prepareReadOnlySnapshot, cleanupSnapshot } from './snapshot.mjs';
 
 /**
  * Wrap the local `kimi` CLI (kimi-code, the TypeScript rewrite, >= 0.26.0)
@@ -63,6 +64,20 @@ export async function invokeKimi(opts) {
 
   const readOnly = isReadOnlyAgentFile(opts.agentFile);
   const roHome = readOnly ? await prepareReadOnlyHome(getPluginRoot()) : null;
+
+  // Filesystem isolation (read-only backstop): run kimi in a snapshot of the
+  // repo — HEAD + uncommitted diff + untracked files — outside the working
+  // tree. If no snapshot is possible (non-git dir), run in place: the deny
+  // rules remain the (sole) gate and the degradation is reported to callers.
+  let snapshot = null;
+  if (readOnly) {
+    snapshot = await prepareReadOnlySnapshot(cwd, sessDir);
+  }
+  const effectiveCwd = snapshot?.workspaceDir || cwd;
+  const isolation = readOnly
+    ? { isolation: snapshot?.workspaceDir ? 'snapshot' : 'in-place', isolationWarning: snapshot?.warning || '' }
+    : { isolation: 'none', isolationWarning: '' };
+
   const args = buildKimiArgs({
     prompt: opts.prompt,
     model: opts.model,
@@ -79,7 +94,7 @@ export async function invokeKimi(opts) {
     const err = createWriteStream(logFile);
 
     const child = spawn(kimiBin, args, {
-      cwd,
+      cwd: effectiveCwd,
       env,
       detached: true,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -88,11 +103,13 @@ export async function invokeKimi(opts) {
     child.stderr.pipe(err);
     child.unref();
 
-    // Write PID file
+    // Write PID file. The snapshot (if any) is left in the session dir — the
+    // broker exits right after a detached spawn, so cleanup belongs to the
+    // session lifecycle, not this process.
     const pidFile = path.join(sessDir, 'pid');
     await writeFile(pidFile, String(child.pid));
 
-    return { sessionId, exitCode: null, retries: 0, outputFile, status: 'started', pid: child.pid };
+    return { sessionId, exitCode: null, retries: 0, outputFile, status: 'started', pid: child.pid, ...isolation };
   }
 
   // Foreground: single run under the watchdogs. kimi-code retries transient
@@ -100,12 +117,17 @@ export async function invokeKimi(opts) {
   // has no legacy exit-75 contract, so the broker no longer respawns; a
   // timeout (124) stays terminal.
   const limits = { totalMs: opts.totalTimeoutMs, idleMs: opts.idleTimeoutMs };
-  const exitCode = await runOnce(kimiBin, args, outputFile, { cwd, env }, limits);
+  let exitCode;
+  try {
+    exitCode = await runOnce(kimiBin, args, outputFile, { cwd: effectiveCwd, env }, limits);
+  } finally {
+    if (!process.env.KIMI_KEEP_SNAPSHOT) await cleanupSnapshot(snapshot?.workspaceDir);
+  }
 
   const timedOut = exitCode === TIMEOUT_EXIT_CODE;
   const finalMessage = await extractFinalMessage(outputFile);
   const kimiSessionId = await extractKimiSessionId(outputFile);
-  return { sessionId, exitCode, retries: 0, outputFile, finalMessage, kimiSessionId, timedOut };
+  return { sessionId, exitCode, retries: 0, outputFile, finalMessage, kimiSessionId, timedOut, ...isolation };
 }
 
 export const TIMEOUT_EXIT_CODE = 124;
