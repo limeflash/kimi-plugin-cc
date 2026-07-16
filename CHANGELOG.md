@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.6.2
+
+> A flush race in the job finalizer, caught by a flaky test.
+
+### Fixed
+
+- **Finalizer could read `output.jsonl` before it finished flushing.** Both the
+  foreground (`kimi.mjs runOnce`) and background (`job-control.mjs superviseJob`)
+  paths read the session output on the child's `close` event to extract the
+  final message, the kimi-code session id (the trailing `session.resume_hint`
+  line), and telemetry. `child.stdout.pipe(out)` ends the write stream when
+  stdout ends, but the flush to disk is async — reading immediately could race
+  ahead of the last buffered line, intermittently dropping `kimi_session_id`
+  and undercounting telemetry (more likely under load, and on Windows where
+  flush timing differs). Both paths now wait for the output stream to finish
+  before reading. Surfaced by `background-detach.test.mjs` flaking ~1 in 5 full
+  suite runs; 0/6 after the fix.
+
 ## 0.6.1
 
 > `/kimi:plan` was not read-only. Found in the same end-to-end pass.
@@ -174,7 +192,7 @@
 
 - `kimi doctor config` accepts the generated ephemeral config.
 - PROVE.txt probe: `Write` denied by the rule, file not created; counter-probe
-  confirmed `Read` still works. See SECURITY.md and HANDOFF.md.
+  confirmed `Read` still works. See SECURITY.md.
 
 ## 0.3.4
 

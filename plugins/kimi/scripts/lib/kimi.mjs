@@ -160,8 +160,16 @@ function runOnce(kimiBin, args, outputFile, spawnOpts = {}, limits = {}) {
       if (hardTimer) clearTimeout(hardTimer);
       if (idleTimer) clearInterval(idleTimer);
       if (killTimer) clearTimeout(killTimer);
-      out.end();
-      resolve(code);
+      // Resolve only after output.jsonl has fully flushed to disk. invokeKimi
+      // reads it immediately (final message, kimi session id) — resolving
+      // before the flush completes can race ahead of the last buffered line
+      // (the trailing session.resume_hint) and intermittently lose it. The
+      // end() callback fires after the stream drains; guard against a stream
+      // error so a write failure can't hang the run.
+      let done = false;
+      const finalize = () => { if (done) return; done = true; resolve(code); };
+      out.on('error', finalize);
+      out.end(finalize);
     };
 
     // SIGTERM, then SIGKILL after 2s. killTimer is tracked so finish() clears

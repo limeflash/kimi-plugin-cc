@@ -156,6 +156,16 @@ export async function superviseJob(sessionId, opts = {}) {
   child.stdout.pipe(out);
   child.stderr.pipe(err);
 
+  // The finalizer reads output.jsonl (kimi session id, telemetry). `pipe` ends
+  // `out` when stdout ends, but the flush to disk is async — reading on the
+  // child's 'close' event can race ahead of the last buffered line (the
+  // trailing session.resume_hint), intermittently losing kimi_session_id and
+  // undercounting telemetry under load. Await this before reading the file.
+  const outFlushed = new Promise((resolve) => {
+    out.on('close', resolve);
+    out.on('error', resolve);
+  });
+
   await writeFile(path.join(sessDir, 'pid'), String(child.pid));
 
   // Idle-output watchdog: if no new output for KIMI_IDLE_TIMEOUT_MS (default
@@ -181,6 +191,8 @@ export async function superviseJob(sessionId, opts = {}) {
   // read-then-merge.
   child.on('close', async (code) => {
     try {
+      // Wait for output.jsonl to finish flushing before reading it.
+      await outFlushed;
       // Capture kimi-code's own session id (meta session.resume_hint) for -S.
       let kimiSessionId = '';
       try {

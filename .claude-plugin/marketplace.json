@@ -6,13 +6,13 @@
   },
   "metadata": {
     "description": "Kimi plugin for Claude Code — code review, exploration, and task delegation with 16 broker commands and MCP integrations.",
-    "version": "0.6.1"
+    "version": "0.6.2"
   },
   "plugins": [
     {
       "name": "kimi",
       "description": "Use Kimi from Claude Code to review code, explore codebases, or delegate tasks.",
-      "version": "0.6.1",
+      "version": "0.6.2",
       "author": {
         "name": "limeflash",
         "email": "ennanoff@gmail.com"

@@ -1,6 +1,6 @@
 {
   "name": "kimi",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "Use Kimi from Claude Code to review code, explore codebases, or delegate tasks.",
   "author": {
     "name": "limeflash",
