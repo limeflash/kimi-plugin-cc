@@ -3,6 +3,7 @@ import { createWriteStream } from 'node:fs';
 import { writeFile, mkdir, readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import { findRepoRoot, writeRepoSession } from './workspace.mjs';
 import { attachTelemetry } from './telemetry.mjs';
 import { warn } from './warn.mjs';
@@ -27,6 +28,25 @@ export function getSessionsDir() {
   return path.join(getPluginRoot(), 'sessions');
 }
 
+function getSupervisorPath() {
+  return fileURLToPath(new URL('./supervisor.mjs', import.meta.url));
+}
+
+/**
+ * Launch a background Kimi job and return IMMEDIATELY.
+ *
+ * The job is run by a **detached supervisor process** (supervisor.mjs), not by
+ * this broker: the broker only writes the initial meta envelope, spawns the
+ * supervisor, and returns. This is what makes `--background` actually
+ * background — the earlier design piped the child's stdio in-process, so the
+ * pipe read-handles kept the broker's event loop alive until the job finished
+ * (a 3s job "returned" in 3.7s). The supervisor owns the child's lifecycle,
+ * the idle watchdog, and finalization (status/commit/telemetry/cleanup).
+ *
+ * Tests inject `opts.spawnFn`; in that mode the supervision runs IN-PROCESS via
+ * superviseJob so the fake child's close handler is observable, exactly as
+ * before. Production (no spawnFn) uses the detached supervisor.
+ */
 export async function startBackground(opts) {
   const sessionId = opts.sessionId || crypto.randomUUID();
   const sessDir = path.join(getSessionsDir(), sessionId);
@@ -50,21 +70,67 @@ export async function startBackground(opts) {
   };
   await writeFile(path.join(sessDir, 'meta.json'), JSON.stringify(meta, null, 2));
 
-  // kimi-code invocation: the workspace is the spawn cwd, and the tool policy
-  // travels via KIMI_CODE_HOME (fail-closed read-only for non-coder agent
-  // files) instead of the legacy --agent-file flag. See kimi-home.mjs.
-  const readOnly = isReadOnlyAgentFile(opts.agentFile);
+  // Track as latest session for this repo before handing off.
+  await writeRepoSession(repoPath, sessionId);
+
+  // Test path: run the supervision in-process so an injected spawnFn's close
+  // handler is observable. No real detachment needed.
+  if (opts.spawnFn) {
+    const { pid } = await superviseJob(sessionId, { spawnFn: opts.spawnFn });
+    return { sessionId, status: 'started', pid };
+  }
+
+  // Production: spawn the detached supervisor and return immediately. Its stdio
+  // is fully detached (nothing piped back here), so once we unref it the broker
+  // holds no handles and exits — the caller is freed.
+  const supervisor = spawn(process.execPath, [getSupervisorPath(), sessionId], {
+    cwd: repoPath,
+    env: { ...process.env },
+    detached: true,
+    stdio: 'ignore',
+  });
+  supervisor.unref();
+
+  return { sessionId, status: 'started', pid: supervisor.pid };
+}
+
+/**
+ * Run one background Kimi job to completion: spawn kimi, watch it, and finalize
+ * the session (status, commit unless read-only, telemetry, snapshot cleanup).
+ * Reads all job parameters from the session's meta.json, so the detached
+ * supervisor needs nothing but the sessionId.
+ *
+ * Returns once the child has been SPAWNED (with its pid); the returned promise
+ * does not wait for the child to exit. Finalization happens in the child's
+ * 'close' handler, which keeps THIS process (the supervisor, or the test
+ * process) alive until the job settles.
+ *
+ * @param {string} sessionId
+ * @param {object} [opts]
+ * @param {function} [opts.spawnFn] - inject a fake spawn (tests). When set,
+ *   snapshot isolation and the idle watchdog are skipped (no real process).
+ * @returns {Promise<{pid: number}>}
+ */
+export async function superviseJob(sessionId, opts = {}) {
+  const sessDir = path.join(getSessionsDir(), sessionId);
+  const meta = await readMeta(sessionId);
+  const repoPath = meta.repo_path || await findRepoRoot();
+  const agentFile = meta.agent_file;
+
+  // kimi-code invocation: workspace is the spawn cwd, tool policy travels via
+  // KIMI_CODE_HOME (fail-closed read-only for non-coder agent files). See
+  // kimi-home.mjs.
+  const readOnly = isReadOnlyAgentFile(agentFile);
   const roHome = readOnly ? await prepareReadOnlyHome(getPluginRoot()) : null;
   const args = buildKimiArgs({
-    prompt: opts.prompt,
-    model: opts.model,
+    prompt: meta.prompt,
+    model: meta.model,
     emptySkillsDir: roHome?.emptySkillsDir,
   });
   const env = buildKimiSpawnEnv({ readOnlyHome: roHome?.homeDir });
 
-  // Filesystem isolation (read-only backstop): kimi runs in a snapshot of the
-  // repo outside the working tree; see snapshot.mjs. Skipped for injected
-  // spawnFn (tests) — there is no real process to isolate.
+  // Filesystem isolation (read-only backstop): kimi runs in a snapshot outside
+  // the working tree. Skipped for injected spawnFn (tests) — nothing to isolate.
   let snapshot = null;
   if (readOnly && !opts.spawnFn) {
     snapshot = await prepareReadOnlySnapshot(repoPath, sessDir);
@@ -89,14 +155,11 @@ export async function startBackground(opts) {
   });
   child.stdout.pipe(out);
   child.stderr.pipe(err);
-  child.unref();
 
   await writeFile(path.join(sessDir, 'pid'), String(child.pid));
 
-  // Idle-output watchdog for the detached background crank: if no new output
-  // for KIMI_IDLE_TIMEOUT_MS (default 5m), the crank is hung — SIGTERM/SIGKILL
-  // it so it can't pin a wave indefinitely. The close handler then marks it
-  // failed:timeout. (Skipped for injected spawnFn in tests, which has no real pid.)
+  // Idle-output watchdog: if no new output for KIMI_IDLE_TIMEOUT_MS (default
+  // 5m), the crank is hung — SIGTERM/SIGKILL it. (Skipped for injected spawnFn.)
   const idleMs = Number(process.env.KIMI_IDLE_TIMEOUT_MS || 5 * 60 * 1000);
   if (!opts.spawnFn && child.pid) {
     let lastOutput = Date.now();
@@ -114,40 +177,40 @@ export async function startBackground(opts) {
     child.on('close', () => clearInterval(idleTimer));
   }
 
-  // Track as latest session for this repo
-  await writeRepoSession(repoPath, sessionId);
-
-  // Watch for completion and update meta + telemetry.
-  // updateMeta preserves the 12 initial-write fields (session_id, agent_file,
-  // prompt, model, started_at, repo_path, mode, auto_commit_policy, tag,
-  // touches_paths, baseline_sha) by reading-then-merging.
+  // Finalize on completion. updateMeta preserves the initial-write fields by
+  // read-then-merge.
   child.on('close', async (code) => {
     try {
-      // Capture kimi-code's own session id (meta session.resume_hint, last
-      // stream-json line) so a later run can resume it with -S.
+      // Capture kimi-code's own session id (meta session.resume_hint) for -S.
       let kimiSessionId = '';
       try {
         const { extractKimiSessionId } = await import('./kimi.mjs');
         kimiSessionId = await extractKimiSessionId(outFile);
       } catch { /* best-effort */ }
-      await updateMeta(sessionId, {
-        status: code === 0 ? 'completed' : 'failed',
-        exit_code: code ?? 1,
-        kimi_session_id: kimiSessionId,
-        finished_at: new Date().toISOString(),
-      });
-      // Read-only runs produce no changes of their own (they ran in a snapshot
-      // outside the repo); committing here would sweep the user's pre-existing
-      // uncommitted work into a "kimi session" commit via `git add -A`. Never.
-      if (readOnly) {
-        await updateMeta(sessionId, { committed: false, commit_reason: 'read-only session: never commits' });
-      } else {
-        try {
-          const m = await readMeta(sessionId);
-          const c = await commitWork(repoPath, sessionId, m, { exitCode: code ?? 1, retries: 0 });
-          await updateMeta(sessionId, { committed: c.committed, commit_sha: c.commit_sha, commit_reason: c.reason });
-        } catch (e) {
-          await warn('commit', e, 'warning');
+
+      // A cancel may have set status='cancelled' by killing the child; don't
+      // clobber that terminal state with 'failed' from the resulting signal.
+      const current = await readMeta(sessionId).catch(() => ({}));
+      if (current.status !== 'cancelled') {
+        await updateMeta(sessionId, {
+          status: code === 0 ? 'completed' : 'failed',
+          exit_code: code ?? 1,
+          kimi_session_id: kimiSessionId,
+          finished_at: new Date().toISOString(),
+        });
+        // Read-only runs produce no changes of their own (they ran in a
+        // snapshot outside the repo); committing here would sweep the user's
+        // pre-existing uncommitted work into a "kimi session" commit. Never.
+        if (readOnly) {
+          await updateMeta(sessionId, { committed: false, commit_reason: 'read-only session: never commits' });
+        } else {
+          try {
+            const m = await readMeta(sessionId);
+            const c = await commitWork(repoPath, sessionId, m, { exitCode: code ?? 1, retries: 0 });
+            await updateMeta(sessionId, { committed: c.committed, commit_sha: c.commit_sha, commit_reason: c.reason });
+          } catch (e) {
+            await warn('commit', e, 'warning');
+          }
         }
       }
       await attachTelemetry(sessionId, getSessionsDir());
@@ -157,7 +220,7 @@ export async function startBackground(opts) {
     }
   });
 
-  return { sessionId, status: 'started', pid: child.pid };
+  return { pid: child.pid };
 }
 
 export async function cancelSession(sessionId) {

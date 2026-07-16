@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.6.0
+
+> `dispatch --background` now actually backgrounds. Fixes the last defect from
+> the 0.5.1 end-to-end pass.
+
+### Changed
+
+- **Background jobs run under a detached supervisor process
+  (`lib/supervisor.mjs`).** Previously `startBackground` spawned kimi and piped
+  its stdout/stderr into in-process write streams; those pipe handles kept the
+  broker's event loop alive until the job finished, so `dispatch --background`
+  returned only when the job completed (a 3s job returned in ~3.7s) and
+  `crank-batch` waves ran serially. Now the broker writes the meta envelope,
+  spawns a fully detached `node supervisor.mjs <sessionId>`, and returns at once
+  (measured: ~120ms for the same 3s job). The supervisor owns the child's
+  lifecycle — idle watchdog and finalization (status, commit-unless-read-only,
+  telemetry, snapshot cleanup) — reading all job parameters from `meta.json`.
+- **Cancel no longer races the finalizer.** The supervisor's close handler skips
+  the status write when the session is already `cancelled`, so a `cancel` that
+  kills the child can't be clobbered back to `failed` by the resulting signal.
+- Supervision logic is now the shared `superviseJob(sessionId, {spawnFn})`, used
+  by the real supervisor and (with an injected `spawnFn`) by the tests, so the
+  in-process test path still observes the close handler exactly as before.
+
+### Added
+
+- `tests/background-detach.test.mjs` (2 tests): `--background` returns before a
+  3s job finishes and reports `running`; the detached supervisor finalizes the
+  session (status/exit/kimi id/commit) after the broker has exited. Live-verified
+  on macOS with kimi-code 0.26.0 (immediate return + running status; cancel stays
+  cancelled). Suite: 103/103.
+
 ## 0.5.1
 
 > Two bug fixes surfaced by an end-to-end test pass of the installed plugin
@@ -25,7 +57,7 @@
   `getSessionsDir`) worked, a confusing split. Regression test in
   `tests/broker.test.mjs`.
 
-### Known issue (not yet fixed)
+### Known issue (fixed in 0.6.0)
 
 - **`dispatch --background` blocks the caller until the job finishes.** The
   broker pipes the detached child's stdout/stderr into in-process write
@@ -33,8 +65,8 @@
   `child.unref()` — so `--background` returns only when the job completes
   (measured: a 3s job returns in ~3.7s, not immediately). This defeats the
   point of `--background` and serializes `crank-batch` waves. Pre-existing
-  (the pipe+unref pattern predates the kimi-code port); a proper fix needs a
-  detached supervisor process. Tracked for a follow-up.
+  (the pipe+unref pattern predates the kimi-code port). **Fixed in 0.6.0** via
+  a detached supervisor process.
 
 ## 0.5.0
 

@@ -35,7 +35,8 @@ The plugin is a Node.js application with a central broker that:
 | `plugins/kimi/scripts/lib/state.mjs` | Session metadata persistence |
 | `plugins/kimi/scripts/lib/git.mjs` | Diff capture and git operations |
 | `plugins/kimi/scripts/lib/workspace.mjs` | Repo root detection, session tracking per repo |
-| `plugins/kimi/scripts/lib/job-control.mjs` | Background job spawning and cancellation |
+| `plugins/kimi/scripts/lib/job-control.mjs` | Background job spawning, cancellation, and the shared `superviseJob` |
+| `plugins/kimi/scripts/lib/supervisor.mjs` | Detached supervisor entrypoint — owns a background job so `--background` returns immediately |
 | `plugins/kimi/scripts/lib/render.mjs` | Markdown formatting for review/explore output |
 
 ## Agent Security Model
