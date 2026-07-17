@@ -37,6 +37,7 @@ Commands:
            [--no-docs] [--research] [--patterns] [--force-commit] [--resume] [--force-resume]
   status [--session-id <id>]
   result [--session-id <id>] [--raw]
+  wait [--session-id <id[,id2,...]>] [--timeout <ms>] [--poll <ms>]
   cancel [--session-id <id>]
   diff-capture --session-id <id> --phase <pre|post>
   branch-diff --base <ref>

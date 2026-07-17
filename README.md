@@ -294,6 +294,16 @@ export KIMI_DISPATCH_TIMEOUT_MS=5400000   # 90 minutes for a big refactor
 
 `--background` returns immediately (~100 ms): the broker hands the job to a **detached supervisor process** that owns the kimi child, the idle watchdog, and the finalization (status, commit for cranks, telemetry, snapshot cleanup). The job keeps running even after the dispatching command returns; check in with `/kimi:status` and `/kimi:result`, stop it with `/kimi:cancel`.
 
+### Orchestrating (waiting for a background job)
+
+Claude Code is turn-based, so it is **not** automatically woken when a `--background` Kimi job finishes — but it *is* re-invoked when one of its own background Bash tasks exits. The broker exposes a blocking primitive for exactly this:
+
+```bash
+node broker.mjs wait --session-id <id[,id2,...]> [--timeout <ms>]
+```
+
+`wait` blocks until the session(s) reach a terminal state, then prints the result (status, `committed`, `kimi_session_id`, final message) and exits. Run it **as a background Bash task** after a background dispatch: its exit re-invokes the orchestrator with the result — no user ping needed. For short jobs, dispatching foreground (omitting `--background`) returns the result in one turn instead. The `kimi-delegate` agent follows this pattern automatically.
+
 ### Moving the work over to Kimi
 
 Any delegated run can be reopened directly inside kimi-code:

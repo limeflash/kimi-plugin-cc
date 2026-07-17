@@ -536,6 +536,96 @@ async function cmdResult(opts) {
   }
 }
 
+/** Read a finished session's final assistant message (empty if none yet). */
+async function readFinalMessage(sessionId) {
+  const outputFile = path.join(getSessionsDir(), sessionId, 'output.jsonl');
+  try {
+    const data = await readFile(outputFile, 'utf-8');
+    const lines = data.trim().split('\n').filter(Boolean);
+    for (let i = lines.length - 1; i >= 0; i--) {
+      let obj;
+      try { obj = JSON.parse(lines[i]); } catch { continue; }
+      if (obj.role === 'assistant' && obj.content) return obj.content;
+    }
+  } catch { /* no output yet */ }
+  return '';
+}
+
+const TERMINAL_STATES = ['completed', 'failed', 'cancelled', 'blocked', 'skipped'];
+
+/**
+ * Block until one or more sessions reach a terminal state, then print each
+ * one's result. This is the orchestration primitive for the delegate pattern:
+ * Claude Code is turn-based and cannot be woken by the detached Kimi
+ * supervisor, but it DOES get notified when one of its own background Bash
+ * tasks exits. So an orchestrator runs `dispatch --background` (returns at
+ * once), then runs `wait` as a background Bash task — this command stays alive
+ * until Kimi is done, and its exit re-invokes the orchestrator with the result.
+ *
+ * Polls meta (written by the supervisor's finalizer) rather than holding any
+ * handle on the job, so it works across process boundaries. Unlike the batch
+ * `waitForSessions`, it never cancels on timeout — it just reports `done:false`
+ * so the caller can wait again.
+ */
+async function cmdWait(opts) {
+  await initSessionDir();
+  let ids;
+  if (opts.session_id) {
+    ids = String(opts.session_id).split(',').map((s) => s.trim()).filter(Boolean);
+  } else {
+    const repoPath = await findRepoRoot();
+    const latest = await readRepoSession(repoPath) || (await getLatestSessionForRepo(repoPath))?.session_id;
+    if (!latest) {
+      console.log(JSON.stringify({ error: 'No session found' }));
+      process.exit(1);
+    }
+    ids = [latest];
+  }
+
+  // Default ceiling a touch above the crank wall-clock cap so a job that runs
+  // to its own timeout still resolves here; the supervisor marks it failed.
+  const timeoutMs = Number(opts.timeout || Number(process.env.KIMI_DISPATCH_TIMEOUT_MS || 30 * 60 * 1000) + 60000);
+  const pollMs = Number(opts.poll || 2000);
+  const start = Date.now();
+  const pending = new Set(ids);
+
+  while (pending.size > 0 && Date.now() - start < timeoutMs) {
+    for (const id of Array.from(pending)) {
+      let running = true;
+      try { running = await isRunning(id); } catch { running = false; }
+      let meta = null;
+      try { meta = await readMeta(id); } catch { /* not yet */ }
+      if (!running && meta && TERMINAL_STATES.includes(meta.status)) {
+        pending.delete(id);
+      }
+    }
+    if (pending.size > 0) await new Promise((r) => setTimeout(r, pollMs));
+  }
+
+  const sessions = [];
+  for (const id of ids) {
+    let meta = {};
+    try { meta = await readMeta(id); } catch { /* missing */ }
+    sessions.push({
+      session_id: id,
+      done: !pending.has(id),
+      status: meta.status || 'unknown',
+      exit_code: meta.exit_code ?? null,
+      committed: meta.committed ?? false,
+      commit_sha: meta.commit_sha || null,
+      kimi_session_id: meta.kimi_session_id || '',
+      reason: meta.reason || meta.commit_reason || '',
+      message: await readFinalMessage(id),
+    });
+  }
+
+  const done = pending.size === 0;
+  console.log(JSON.stringify({ done, timed_out: !done, waited_ms: Date.now() - start, sessions }, null, 2));
+  // Exit non-zero only when we gave up waiting, so a scripted wrapper can tell;
+  // Claude reads the `done` field regardless.
+  if (!done) process.exit(1);
+}
+
 async function cmdCancel(opts) {
   const sessionId = opts.session_id;
   if (!sessionId) {
@@ -876,6 +966,7 @@ async function cmdNext(opts) {
 register('dispatch', cmdDispatch);
 register('status', cmdStatus);
 register('result', cmdResult);
+register('wait', cmdWait);
 register('cancel', cmdCancel);
 register('diff-capture', cmdDiffCapture);
 register('branch-diff', cmdBranchDiff);

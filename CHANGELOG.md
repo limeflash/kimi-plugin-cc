@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.7.0
+
+> An orchestration primitive: block on a background job and get notified when
+> it finishes — so an orchestrator (e.g. Claude driving Kimi) doesn't need the
+> user to ping it to discover completion.
+
+### Added
+
+- **`broker.mjs wait --session-id <id[,id2,…]> [--timeout <ms>] [--poll <ms>]`.**
+  Blocks (polling the session meta the supervisor writes) until one or more
+  sessions reach a terminal state, then prints each one's result — status,
+  `committed`, `commit_sha`, `kimi_session_id`, and the final assistant message
+  — and exits (0 = done, 1 = still running past `--timeout`, so the caller can
+  wait again). Unlike the batch waiter it never cancels the job.
+
+  This closes the orchestration gap left by non-blocking `--background`: Claude
+  Code is turn-based and is not woken when the detached Kimi supervisor
+  finishes, but it *is* re-invoked when one of its own background Bash tasks
+  exits. So the pattern is: `dispatch --background` (returns at once) → run
+  `wait` as a **background** Bash task → its exit re-invokes the orchestrator
+  with the result. Documented in `commands/crank.md` and the `kimi-delegate`
+  agent. `tests/wait.test.mjs` (3 tests). Suite: 111.
+
+### Fixed
+
+- **`kimi-delegate` agent brought up to date.** It still described the legacy
+  `kimi --print` invocation, exit-75 retries, `~/.kimi/` paths, and — the
+  important one — dispatched `/kimi:plan` with `coder.yaml` (full write access).
+  Rewritten for kimi-code: `plan-sub.yaml` for plan (read-only), the agent-file
+  path as the policy selector, terminal exit codes, `~/.kimi-code` paths, and
+  the `wait` orchestration pattern.
+
 ## 0.6.2
 
 > A flush race in the job finalizer, caught by a flaky test.

@@ -71,6 +71,40 @@ allowed-tools: [Bash, Read, Write, Edit, Task]
    - Foreground: final message + diff delta + session ID.
    - Background: session ID + `/kimi:status` reminder.
 
+## Orchestrating: waiting for a background crank to finish
+
+Claude Code is turn-based — it is **not** woken up when the detached Kimi
+supervisor finishes a `--background` job. So after a background dispatch, you
+will not spontaneously learn that Kimi is done; something has to observe the
+completion.
+
+The clean pattern uses your **own** background-task notifications: Claude Code
+*does* re-invoke you when one of your background Bash tasks exits. So block on
+the job with the `wait` command, launched as a **background** Bash task:
+
+1. `broker.mjs dispatch … --background` → returns a session id immediately.
+2. `broker.mjs wait --session-id <id>` — run this **with `run_in_background: true`**.
+   It stays alive polling the session and exits only when Kimi reaches a
+   terminal state, printing the result (status, committed, `kimi_session_id`,
+   final message). Its exit re-invokes you with that result — no user ping
+   needed.
+
+```
+broker.mjs wait --session-id <id[,id2,...]> [--timeout <ms>] [--poll <ms>]
+```
+
+- Accepts several comma-separated ids — dispatch a wave of background cranks,
+  then `wait` on all of them in one background task.
+- On completion it prints `{ done: true, sessions: [...] }` and exits 0.
+- If the job outlives `--timeout` (default: the crank wall-clock cap + 1 min),
+  it prints `{ done: false, timed_out: true, … }` and exits 1 — call `wait`
+  again, or `/kimi:cancel`. It never cancels the job itself.
+
+For a short crank you can instead just dispatch **foreground** (omit
+`--background`) — the Bash call blocks until done and returns the result in one
+turn. Prefer background + `wait` for anything that may exceed the foreground
+Bash timeout.
+
 ## Notes
 
 - Uses `coder.yaml` → write-capable, scoped to working directory.
